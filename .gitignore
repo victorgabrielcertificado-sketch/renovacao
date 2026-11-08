@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+*.xls
+upload_*
+relatorio*.xlsx
+certificados_exemplo.xlsx
+.venv/
+venv/
+.env
