@@ -129,10 +129,28 @@ python testes.py -v             # 21 testes
 - Sem migração de schema: apenas `CREATE TABLE IF NOT EXISTS` + índices.
 - `demo`/`exportar` escrevem arquivos no diretório atual.
 
+## Atualização: login por certificado digital
+
+Recursos adicionados depois da revisão inicial:
+
+- Tabela `usuarios` (nome, e-mail, perfil, impressão digital SHA-256, sujeito, validade, ativo).
+- `ler_certificado()` / `cert_info()`: aceita `.cer`, `.crt`, `.pem`, `.pfx` e `.p12`; do `.pfx`
+  só a parte pública é extraída (a chave privada é descartada e a senha não é armazenada).
+- `_auth()`: certificado via proxy **ou** senha básica de emergência. O cabeçalho `X-Client-Cert`
+  só é aceito quando `X-Proxy-Secret` confere com `PROXY_SECRET`.
+- Rotas `/api/eu`, `/api/usuarios` (GET/POST), `/api/usuarios/ativo` e `/api/usuarios/remover`.
+- Aba **Usuários** no painel: lista, ativa/desativa, remove e cadastra certificados.
+- Perfis `admin` e `operador`: operador não acessa Configurações nem Usuários (GET e POST).
+- Com `AUTH_CERT=1` o app escuta só em `127.0.0.1`; o proxy (nginx) é quem fica exposto e exige o
+  certificado no TLS.
+- Primeiro administrador: subir com `PAINEL_SENHA` (login de emergência), cadastrar o certificado
+  admin e depois remover a senha se desejar.
+
 ## Validação executada
 
-- `python -m py_compile renovacao.py` → OK
-- `python testes.py -v` → **21 testes, todos OK**
-- Teste manual do painel no navegador: renderização, troca de status, histórico, aba de
-  configurações e webhook (token certo/errado) — OK
+- `python -m py_compile renovacao.py testes.py` → OK
+- `python testes.py -v` → **27 testes, todos OK** (inclui certificado válido, vencido, inativo,
+  operador × admin, cadastro PEM/DER/PFX e senha errada)
+- Teste manual do painel no navegador: renderização, troca de status, histórico, abas de
+  configurações/usuários e webhook (token certo/errado) — OK
 - JavaScript embutido validado com `node --check` → OK

@@ -11,18 +11,29 @@ Config por variáveis de ambiente (sem elas, e-mail e Kommo rodam em modo simula
   KOMMO_URL (https://SUB.kommo.com), KOMMO_TOKEN, KOMMO_PIPELINE,
   KOMMO_ETAPAS='{"a_vencer":123,"email_enviado":124,...}'  (status -> id da etapa)
   Painel: PORT, HOST, PAINEL_USER, PAINEL_SENHA, WEBHOOK_TOKEN, DB
+  Login por certificado: AUTH_CERT=1, PROXY_SECRET (o proxy repassa X-Client-Cert em PEM urlencoded)
 """
 import argparse, base64, hmac, json, os, random, re, smtplib, sqlite3, tempfile, threading, time, unicodedata, urllib.error, urllib.request
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 import pandas as pd
+
+try:                              # login por certificado é opcional
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    _CRYPTO_OK = True
+except ImportError:
+    x509 = hashes = pkcs12 = None
+    _CRYPTO_OK = False
 
 REGUA = [60, 30, 15, 7, 1, -3]   # dias para o vencimento em que cada aviso dispara (negativo = vencido)
 LIMITE_ATRASO = 30               # não notifica quem venceu há mais de X dias
 STATUS = ["a_vencer", "email_enviado", "whatsapp_enviado", "agendado", "emitido", "pago", "perdido"]
-MAX_UPLOAD = 20 * 1024 * 1024    # 20 MB
+MAX_UPLOAD = 20 * 1024 * 1024    # 20 MB (planilhas)
+MAX_CERT = 1 * 1024 * 1024       # 1 MB (certificados)
 MES_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -52,6 +63,9 @@ CREATE TABLE IF NOT EXISTS renovacoes(id INTEGER PRIMARY KEY, cliente TEXT NOT N
   tipo TEXT NOT NULL, vencimento TEXT NOT NULL, valor REAL, status TEXT NOT NULL DEFAULT 'a_vencer',
   kommo_lead_id INTEGER, regua_ultima INTEGER,
   UNIQUE(cliente, tipo, vencimento));
+CREATE TABLE IF NOT EXISTS usuarios(id INTEGER PRIMARY KEY, nome TEXT NOT NULL, email TEXT,
+  perfil TEXT NOT NULL DEFAULT 'operador', fp TEXT UNIQUE, sujeito TEXT, validade TEXT,
+  ativo INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS config(chave TEXT PRIMARY KEY, valor TEXT);
 CREATE TABLE IF NOT EXISTS eventos(id INTEGER PRIMARY KEY, renovacao_id INTEGER, ts TEXT NOT NULL, tipo TEXT NOT NULL,
   canal TEXT, resultado TEXT, detalhe TEXT);
@@ -59,6 +73,7 @@ CREATE INDEX IF NOT EXISTS ix_renov_venc   ON renovacoes(vencimento);
 CREATE INDEX IF NOT EXISTS ix_renov_status ON renovacoes(status);
 CREATE INDEX IF NOT EXISTS ix_renov_lead   ON renovacoes(kommo_lead_id);
 CREATE INDEX IF NOT EXISTS ix_eventos_rid  ON eventos(renovacao_id);
+CREATE INDEX IF NOT EXISTS ix_usuarios_fp  ON usuarios(fp);
 """
 
 
@@ -479,6 +494,31 @@ def metricas(mes=None, hoje=None):
             "por_tipo": taxa("tipo", base, (hoje,))}
 
 
+# ---------- Login por certificado digital ----------
+# O proxy (nginx) exige o certificado no TLS (prova de posse da chave privada) e repassa o PEM em
+# X-Client-Cert. Aqui só conferimos se a impressão digital (SHA-256) é de um usuário ativo e dentro
+# da validade. O cabeçalho só é aceito quando X-Proxy-Secret confere com PROXY_SECRET.
+def ler_certificado(nome, dados, senha=""):
+    if not _CRYPTO_OK:
+        raise RuntimeError("instale cryptography: pip install cryptography")
+    if nome.lower().endswith((".pfx", ".p12")):
+        # só extrai a parte pública; a chave privada é descartada
+        _chave, cert, _extras = pkcs12.load_key_and_certificates(dados, senha.encode() if senha else None)
+        if cert is None:
+            raise ValueError("PFX sem certificado")
+        return cert
+    if b"BEGIN CERTIFICATE" in dados:
+        return x509.load_pem_x509_certificate(dados)
+    return x509.load_der_x509_certificate(dados)
+
+
+def cert_info(c):
+    ini = getattr(c, "not_valid_before_utc", None) or c.not_valid_before
+    fim = getattr(c, "not_valid_after_utc", None) or c.not_valid_after
+    return {"fp": c.fingerprint(hashes.SHA256()).hex(), "sujeito": c.subject.rfc4514_string(),
+            "ini": ini.date().isoformat(), "fim": fim.date().isoformat()}
+
+
 # ---------- Painel web + webhook ----------
 HTML = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>Renovação de certificados</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
@@ -501,10 +541,10 @@ th{font-size:12px;color:var(--mu);font-weight:600}tr:last-child td{border-bottom
 select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}.lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
 h3{font-size:15px;margin:24px 0 8px}.hist{margin:0;padding:12px 16px;list-style:none;font-size:13px}.hist li{padding:4px 0;border-bottom:1px dashed var(--ln)}.hist li:last-child{border:0}.hist time{color:var(--mu);margin-right:10px}
 .bar{display:inline-block;height:8px;border-radius:4px;background:var(--ac);vertical-align:middle;margin-right:8px}
-.cfg label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}.cfg input{display:block;margin-top:4px;width:min(420px,100%)}.et{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin:8px 0 14px}.et label{margin:0}
+.cfg label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}.cfg input,.cfg select{display:block;margin-top:4px;width:min(420px,100%)}.et{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin:8px 0 14px}.et label{margin:0}
 #msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:5}#msg.on{opacity:1}
 </style></head><body>
-<header><h1>Renovação de certificados</h1><nav><button id="n1" onclick="aba(1)" aria-current="true">Renovações do mês</button><button id="n2" onclick="aba(2)" aria-current="false">Configurações</button></nav></header>
+<header><h1>Renovação de certificados</h1><nav><button id="n1" onclick="aba(1)" aria-current="true">Renovações do mês</button><button id="n2" onclick="aba(2)" aria-current="false">Configurações</button><button id="n3" onclick="aba(3)" aria-current="false" hidden>Usuários</button></nav></header>
 <main><section id="s1">
 <div class="topo"><h2 id="tit"></h2><button class="b" onclick="nav(-1)" aria-label="Mês anterior">◀</button><button class="b" onclick="nav(1)" aria-label="Próximo mês">▶</button><button class="b p" onclick="regua()">Rodar régua agora</button></div>
 <div class="nums" id="nums"></div><div class="fita" id="fita" aria-hidden="true"></div><div class="leg" id="leg"></div>
@@ -517,7 +557,18 @@ h3{font-size:15px;margin:24px 0 8px}.hist{margin:0;padding:12px 16px;list-style:
 <label>URL da conta<input id="cu" placeholder="https://suaconta.kommo.com" inputmode="url"></label><label>Token de longa duração<input id="ct" type="password" autocomplete="off"></label><label>ID do funil<input id="cp" inputmode="numeric"></label>
 <p style="font-size:13px;color:var(--mu)">ID da etapa no Kommo para cada status:</p><div class="et" id="ce"></div>
 <button class="b p" onclick="salvar()">Salvar</button> <button class="b" onclick="testar()">Testar conexão</button> <button class="b" onclick="limparToken()">Limpar token</button>
-<p style="font-size:13px;color:var(--mu)">Webhook para cadastrar na Kommo (mudança de etapa): <code id="wh"></code> (acrescente <code>?t=SEU_WEBHOOK_TOKEN</code> se definiu essa variável)</p></section></main>
+<p style="font-size:13px;color:var(--mu)">Webhook para cadastrar na Kommo (mudança de etapa): <code id="wh"></code> (acrescente <code>?t=SEU_WEBHOOK_TOKEN</code> se definiu essa variável)</p></section>
+<section id="s3" hidden class="cfg"><h3>Usuários e certificados</h3>
+<p id="eu" style="font-size:13px;color:var(--mu)"></p>
+<div class="cx"><table id="usrs"></table></div>
+<h3>Cadastrar certificado</h3>
+<label>Nome<input id="un" autocomplete="off"></label>
+<label>E-mail<input id="ue" type="email" autocomplete="off"></label>
+<label>Perfil<select id="up"><option value="operador">Operador</option><option value="admin">Administrador</option></select></label>
+<label>Certificado (.cer/.crt/.pem/.pfx)<input type="file" id="uf" accept=".cer,.crt,.pem,.pfx,.p12"></label>
+<label>Senha do .pfx (se houver)<input id="us" type="password" autocomplete="off"></label>
+<button class="b p" onclick="cadastrarCert()">Cadastrar</button>
+<p style="font-size:13px;color:var(--mu)">O login por certificado exige <code>AUTH_CERT=1</code>, <code>PROXY_SECRET</code> e o proxy repassando <code>X-Client-Cert</code> (PEM urlencoded). A chave privada do .pfx é descartada; só a parte pública é guardada.</p></section></main>
 <div id="msg" role="status" aria-live="polite"></div>
 <script>
 const ST=[["a_vencer","A vencer","#8f9aa7"],["email_enviado","E-mail enviado","#6a8fc2"],["whatsapp_enviado","WhatsApp enviado","#2e9c8e"],["agendado","Agendado","#d6a01e"],["emitido","Emitido","#8f6cc0"],["pago","Pago","#2d7d4e"],["perdido","Perdido","#b4432f"]];
@@ -530,9 +581,9 @@ const post=(u,b)=>j(u,{method:"POST",headers:{"X-Requested-With":"fetch",...(b i
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const br=s=>s?String(s).slice(8,10)+"/"+String(s).slice(5,7)+"/"+String(s).slice(0,4):"—";
 const moeda=v=>v==null||v===""?"—":"R$ "+Number(v).toLocaleString("pt-BR",{maximumFractionDigits:2});
-const hj=new Date();let mes=hj.getFullYear()+"-"+String(hj.getMonth()+1).padStart(2,"0"),aberto=null,LISTA=[];
+const hj=new Date();let mes=hj.getFullYear()+"-"+String(hj.getMonth()+1).padStart(2,"0"),aberto=null,LISTA=[],EU={nome:"local",perfil:"admin"};
 function toast(t){const m=el("msg");m.textContent=t;m.classList.add("on");clearTimeout(toast.h);toast.h=setTimeout(()=>m.classList.remove("on"),2800)}
-function aba(n){el("s1").hidden=n!=1;el("s2").hidden=n!=2;el("n1").setAttribute("aria-current",String(n==1));el("n2").setAttribute("aria-current",String(n==2));if(n==2)cfgLoad()}
+function aba(n){el("s1").hidden=n!=1;el("s2").hidden=n!=2;el("s3").hidden=n!=3;el("n1").setAttribute("aria-current",String(n==1));el("n2").setAttribute("aria-current",String(n==2));el("n3").setAttribute("aria-current",String(n==3));if(n==2)cfgLoad();if(n==3)usuarios()}
 function nav(d){const[y,m]=mes.split("-").map(Number),t=new Date(y,m-1+d,1);mes=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0");aberto=null;render()}
 async function render(){
  try{
@@ -576,7 +627,12 @@ async function salvar(){
 async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
 async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
 async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await render()}catch(e){toast("Falha ao importar: "+e.message)}}
-aba(1);render();
+async function carregarEu(){try{EU=await j("/api/eu");el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`+(EU.validade?` · certificado válido até ${br(EU.validade)}`:"");const adm=EU.perfil==="admin";el("n2").hidden=!adm;el("n3").hidden=!adm;if(!adm&&!el("s2").hidden)aba(1)}catch(e){}}
+async function usuarios(){try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
+async function ativar(id,ativo){try{await post("/api/usuarios/ativo",{id,ativo});toast(ativo?"Usuário ativado.":"Usuário desativado.")}catch(e){toast("Falha: "+e.message);usuarios()}}
+async function remover(id){if(!confirm("Remover este usuário?"))return;try{await post("/api/usuarios/remover",{id});toast("Usuário removido.");usuarios()}catch(e){toast("Falha: "+e.message)}}
+async function cadastrarCert(){const f=el("uf").files[0];if(!f)return toast("Escolha o certificado.");const nome=el("un").value.trim();if(!nome)return toast("Informe o nome.");const q=new URLSearchParams({nome,email:el("ue").value.trim(),perfil:el("up").value,arquivo:f.name});const h={"X-Requested-With":"fetch"};const s=el("us").value;if(s)h["X-Pfx-Senha"]=s;try{const r=await j("/api/usuarios?"+q,{method:"POST",headers:h,body:f});toast("Certificado cadastrado. Válido até "+br(r.validade)+".");el("uf").value="";el("us").value="";usuarios()}catch(e){toast("Falha: "+e.message)}}
+carregarEu();aba(1);render();
 </script></body></html>"""
 
 
@@ -609,22 +665,52 @@ class H(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(b)
 
-    def _auth(self):   # login básico do painel; o webhook usa WEBHOOK_TOKEN
-        senha = os.getenv("PAINEL_SENHA")
-        if not senha or urlparse(self.path).path.startswith("/webhook/"):
+    def _auth(self):
+        """Certificado digital (via proxy) e/ou senha básica de emergência. Webhook usa WEBHOOK_TOKEN."""
+        self.user = None
+        if urlparse(self.path).path.startswith("/webhook/"):
             return True
+        senha = os.getenv("PAINEL_SENHA")
+        cert_on = os.getenv("AUTH_CERT") == "1"
+        if not senha and not cert_on:          # uso local: sem login
+            self.user = {"nome": "local", "perfil": "admin", "validade": None}
+            return True
+
         cabecalho = self.headers.get("Authorization", "")
-        if cabecalho.startswith("Basic "):
+        if senha and cabecalho.startswith("Basic "):
             try:
                 usuario, _, informada = base64.b64decode(cabecalho[6:]).decode("utf-8").partition(":")
             except Exception:
                 usuario = informada = ""
             if hmac.compare_digest(usuario.encode(), os.getenv("PAINEL_USER", "admin").encode()) \
                and hmac.compare_digest(informada.encode(), senha.encode()):
+                self.user = {"nome": "Administrador", "perfil": "admin", "validade": None}
                 return True
-        self._send({"erro": "autenticação necessária"}, code=401,
-                   extra={"WWW-Authenticate": 'Basic realm="Renovacoes", charset="UTF-8"'})
+
+        if cert_on:
+            pem = unquote(self.headers.get("X-Client-Cert", ""))
+            segredo = os.getenv("PROXY_SECRET")
+            if pem and segredo and hmac.compare_digest(self.headers.get("X-Proxy-Secret", "").encode(),
+                                                       segredo.encode()):
+                try:
+                    i = cert_info(x509.load_pem_x509_certificate(pem.encode()))
+                except Exception:
+                    i = None
+                if i:
+                    hj = date.today().isoformat()
+                    u = db().execute("SELECT * FROM usuarios WHERE fp=? AND ativo=1", (i["fp"],)).fetchone()
+                    if u and i["ini"] <= hj <= i["fim"]:
+                        self.user = {"id": u["id"], "nome": u["nome"], "perfil": u["perfil"],
+                                     "validade": u["validade"]}
+                        return True
+                    return self._send({"erro": "certificado não autorizado, inativo ou vencido"}, code=403)
+
+        extra = {"WWW-Authenticate": 'Basic realm="Renovacoes", charset="UTF-8"'} if senha else None
+        self._send({"erro": "autenticação necessária"}, code=401, extra=extra)
         return False
+
+    def _admin(self):
+        return bool(self.user and self.user.get("perfil") == "admin")
 
     def _erro(self, e):
         print("erro HTTP:", e)
@@ -660,7 +746,16 @@ class H(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 return self._send({"erro": "id inválido"}, code=400)
             return self._send([_dict(r) for r in db().execute("SELECT * FROM eventos WHERE renovacao_id=? ORDER BY id", (rid,))])
+        if u.path == "/api/eu":
+            return self._send(self.user)
+        if u.path == "/api/usuarios":
+            if not self._admin():
+                return self._send({"erro": "apenas administradores"}, code=403)
+            return self._send([_dict(r) for r in db().execute(
+                "SELECT id,nome,email,perfil,sujeito,validade,ativo FROM usuarios ORDER BY nome")])
         if u.path == "/api/config":
+            if not self._admin():
+                return self._send({"erro": "apenas administradores"}, code=403)
             return self._send({"url": K["url"], "pipeline": K["pipeline"], "etapas": K["etapas"],
                                "token_definido": bool(K["token"])})
         return self._send({"erro": "não encontrado"}, code=404)
@@ -680,7 +775,8 @@ class H(BaseHTTPRequestHandler):
             tamanho = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             tamanho = -1
-        if tamanho < 0 or tamanho > MAX_UPLOAD:
+        limite = MAX_CERT if p == "/api/usuarios" else MAX_UPLOAD
+        if tamanho < 0 or tamanho > limite:
             return self._send({"erro": "corpo inválido ou grande demais"}, code=413)
         body = self.rfile.read(tamanho)
 
@@ -691,6 +787,10 @@ class H(BaseHTTPRequestHandler):
         # CSRF: navegador não consegue mandar este header cross-site sem preflight (que não atendemos)
         if self.headers.get("X-Requested-With") != "fetch":
             return self._send({"erro": "requisição inválida"}, code=403)
+        if p.startswith(("/api/usuarios", "/api/config")) and not self._admin():
+            return self._send({"erro": "apenas administradores"}, code=403)
+        if p == "/api/usuarios":       # corpo = .cer/.crt/.pem (ou .pfx)
+            return self._cadastrar_usuario(body, u)
         try:
             d = json.loads(body or b"{}")
         except json.JSONDecodeError:
@@ -717,6 +817,24 @@ class H(BaseHTTPRequestHandler):
             return self._send({"ok": True})
         if p == "/api/regua":
             return self._send({"notificadas": regua()})
+        if p == "/api/usuarios/ativo":
+            try:
+                uid = int(d.get("id"))
+            except (TypeError, ValueError):
+                return self._send({"erro": "id inválido"}, code=400)
+            if uid == self.user.get("id"):
+                return self._send({"erro": "não é possível desativar o próprio usuário"}, code=400)
+            db().execute("UPDATE usuarios SET ativo=? WHERE id=?", (1 if d.get("ativo") else 0, uid))
+            return self._send({"ok": True})
+        if p == "/api/usuarios/remover":
+            try:
+                uid = int(d.get("id"))
+            except (TypeError, ValueError):
+                return self._send({"erro": "id inválido"}, code=400)
+            if uid == self.user.get("id"):
+                return self._send({"erro": "não é possível remover o próprio usuário"}, code=400)
+            db().execute("DELETE FROM usuarios WHERE id=?", (uid,))
+            return self._send({"ok": True})
         if p == "/api/config":
             return self._config(d)
         if p == "/api/kommo/testar":
@@ -754,6 +872,31 @@ class H(BaseHTTPRequestHandler):
                 db().execute("INSERT OR REPLACE INTO config VALUES('etapas',?)", (json.dumps(etapas),))
         carregar_cfg()
         return self._send({"ok": True})
+
+    def _cadastrar_usuario(self, body, u):
+        q = parse_qs(u.query)
+
+        def g(k):
+            return (q.get(k, [""])[0] or "").strip()
+
+        nome = g("nome")[:120]
+        if not nome:
+            return self._send({"erro": "informe o nome"}, code=400)
+        email = g("email")[:200]
+        perfil = g("perfil") if g("perfil") in ("admin", "operador") else "operador"
+        try:
+            i = cert_info(ler_certificado(g("arquivo"), body, self.headers.get("X-Pfx-Senha", "")))
+        except RuntimeError as e:
+            return self._send({"erro": str(e)}, code=500)
+        except Exception:
+            return self._send({"erro": "certificado inválido ou senha do .pfx incorreta"}, code=400)
+        try:
+            cur = db().execute("""INSERT INTO usuarios(nome,email,perfil,fp,sujeito,validade)
+                                  VALUES(?,?,?,?,?,?)""",
+                               (nome, email or None, perfil, i["fp"], i["sujeito"], i["fim"]))
+        except sqlite3.IntegrityError:
+            return self._send({"erro": "este certificado já está cadastrado"}, code=409)
+        return self._send({"ok": True, "id": cur.lastrowid, "validade": i["fim"]})
 
     def _webhook(self, body, u):
         esperado = os.getenv("WEBHOOK_TOKEN")
@@ -824,6 +967,11 @@ def servir():
         print("[aviso] PAINEL_SENHA não definida: painel sem login (restrito a 127.0.0.1).")
     if not os.getenv("WEBHOOK_TOKEN"):
         print("[aviso] WEBHOOK_TOKEN não definido: webhook aceita chamadas sem token.")
+    if os.getenv("AUTH_CERT") == "1":
+        if not _CRYPTO_OK:
+            print("[aviso] AUTH_CERT=1 sem cryptography instalado: login por certificado não funciona.")
+        if not os.getenv("PROXY_SECRET"):
+            print("[aviso] AUTH_CERT=1 sem PROXY_SECRET: o cabeçalho X-Client-Cert não é confiável.")
 
     def ciclo():   # régua automática a cada 6h (idempotente: não repete avisos)
         while True:
@@ -835,7 +983,9 @@ def servir():
 
     threading.Thread(target=ciclo, daemon=True, name="regua").start()
     porta = int(os.getenv("PORT", "8000"))
-    host = os.getenv("HOST") or ("0.0.0.0" if os.getenv("PAINEL_SENHA") else "127.0.0.1")
+    # com login por certificado o app deve ficar atrás do proxy: escuta só local
+    publico = bool(os.getenv("PAINEL_SENHA")) and os.getenv("AUTH_CERT") != "1"
+    host = os.getenv("HOST") or ("0.0.0.0" if publico else "127.0.0.1")
     srv = ThreadingHTTPServer((host, porta), H)
     srv.daemon_threads = True
     print(f"Sistema web em http://localhost:{porta} (escutando em {host}:{porta})")

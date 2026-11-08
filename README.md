@@ -11,8 +11,9 @@ automáticos (e-mail/WhatsApp), sincronizar leads com a Kommo CRM e medir a taxa
   extensão via nota no lead da Kommo.
 - **Sincroniza com a Kommo**: cria/atualiza lead, move etapa e registra nota.
 - **Webhook** para receber mudanças de etapa da Kommo.
+- **Login por certificado digital** (e-CPF/e-CNPJ) via proxy TLS, com perfis `admin`/`operador`.
 - **Painel web** responsivo (claro/escuro) com funil, taxa de renovação por mês, histórico do lead,
-  importação de planilha e configuração da integração.
+  importação de planilha, configuração da integração e gestão de usuários/certificados.
 - **Métricas**: total que vence no mês, taxa de renovação, receita recebida, por mês e por tipo.
 
 ## Requisitos
@@ -20,9 +21,10 @@ automáticos (e-mail/WhatsApp), sincronizar leads com a Kommo CRM e medir a taxa
 - Python 3.10+
 - `pandas`
 - `openpyxl` (para `.xlsx`)
+- `cryptography` (somente para o login por certificado)
 
 ```bash
-pip install pandas openpyxl
+pip install pandas openpyxl cryptography
 ```
 
 ## Uso
@@ -51,7 +53,9 @@ Sem elas, e-mail e Kommo rodam em **modo simulação** (só imprimem no console)
 | `KOMMO_PIPELINE` | ID do funil |
 | `KOMMO_ETAPAS` | JSON `{"a_vencer":123,"email_enviado":124,...}` (status → ID da etapa) |
 | `PORT`, `HOST` | porta e interface do painel (padrão `8000` / `127.0.0.1` sem senha) |
-| `PAINEL_USER`, `PAINEL_SENHA` | login básico do painel |
+| `PAINEL_USER`, `PAINEL_SENHA` | login básico de emergência (admin) |
+| `AUTH_CERT=1` | habilita login por certificado digital |
+| `PROXY_SECRET` | segredo que o proxy envia em `X-Proxy-Secret` (obrigatório com `AUTH_CERT=1`) |
 | `WEBHOOK_TOKEN` | token exigido em `/webhook/kommo?t=...` |
 | `DB` | caminho do SQLite (padrão `renovacao.db`) |
 
@@ -62,9 +66,51 @@ As configurações salvas pelo painel têm prioridade sobre as variáveis de amb
 Cadastre a URL `https://seu-servidor/webhook/kommo` (acrescente `?t=SEU_WEBHOOK_TOKEN` se
 definido). A mudança de etapa é aplicada ao lead correspondente em `renovacoes.kommo_lead_id`.
 
+## Login por certificado digital
+
+O certificado é exigido no **TLS** pelo proxy (prova de posse da chave privada). O proxy repassa o
+PEM em `X-Client-Cert` (urlencoded) e um segredo em `X-Proxy-Secret`. O app confere a impressão
+digital SHA-256 contra a tabela `usuarios`, se o usuário está ativo e se o certificado está dentro
+da validade. A chave privada nunca chega ao app.
+
+Exemplo de `nginx`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name renovacao.exemplo.com;
+
+    ssl_certificate         /etc/nginx/certs/servidor.crt;
+    ssl_certificate_key     /etc/nginx/certs/servidor.key;
+    ssl_client_certificate  /etc/nginx/certs/ca.crt;   # CA dos certificados dos usuários
+    ssl_verify_client       on;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Client-Cert $ssl_client_escaped_cert;
+        proxy_set_header   X-Proxy-Secret "troque-este-segredo";
+    }
+}
+```
+
+No app:
+
+```bash
+AUTH_CERT=1 PROXY_SECRET=troque-este-segredo PAINEL_SENHA=senha-inicial python renovacao.py serve
+```
+
+Com `AUTH_CERT=1` o app escuta só em `127.0.0.1` (o proxy é quem fica exposto).
+
+**Primeiro administrador:** suba com `PAINEL_SENHA` definida (login básico de emergência), entre em
+**Usuários**, cadastre o primeiro certificado como `admin` e depois remova a senha se quiser. O
+cadastro aceita `.cer`, `.crt`, `.pem`, `.pfx` e `.p12` (a senha do `.pfx` é usada só para extrair
+o certificado e não é armazenada).
+
 ## Modelo de dados (SQLite)
 
 - `renovacoes` — cliente, contato, tipo, vencimento, valor, status, lead da Kommo, último aviso.
+- `usuarios` — nome, e-mail, perfil, impressão digital SHA-256 do certificado, validade e ativo.
 - `eventos` — histórico append-only (importação, e-mail, WhatsApp, mudança de etapa, erros).
 - `config` — configuração salva pelo painel.
 
@@ -76,12 +122,15 @@ Status: `a_vencer → email_enviado → whatsapp_enviado → agendado → emitid
 python testes.py -v
 ```
 
-21 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos), régua
-(limiares, deduplicação, sem contato), métricas, API HTTP, CSRF e webhook.
+26 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos), régua
+(limiares, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook e login por certificado
+(certificado válido, vencido, inativo, operador × admin, cadastro PEM e DER).
 
 ## Segurança
 
-- Sem `PAINEL_SENHA`, o painel escuta apenas em `127.0.0.1`.
+- Sem `PAINEL_SENHA` e sem `AUTH_CERT=1`, o painel escuta apenas em `127.0.0.1`.
+- Com `AUTH_CERT=1`, o app também escuta em `127.0.0.1` e só aceita `X-Client-Cert` se
+  `X-Proxy-Secret` conferir com `PROXY_SECRET` — nunca exponha o app direto sem o proxy.
 - POSTs do painel exigem `X-Requested-With: fetch` (mitiga CSRF).
 - O token da Kommo fica em texto puro no SQLite — para produção, prefira variável de ambiente ou
   um cofre de segredos.

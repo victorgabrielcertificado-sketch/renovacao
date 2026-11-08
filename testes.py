@@ -8,14 +8,17 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 BASE = Path(__file__).resolve().parent
 os.environ["DB"] = str(Path(tempfile.mkdtemp(prefix="renov_teste_")) / "teste.db")
 os.environ.pop("PAINEL_SENHA", None)
 os.environ.pop("WEBHOOK_TOKEN", None)
 os.environ.pop("SMTP_HOST", None)
+os.environ.pop("AUTH_CERT", None)
+os.environ.pop("PROXY_SECRET", None)
 sys.path.insert(0, str(BASE))
 
 import renovacao as R  # noqa: E402
@@ -24,6 +27,54 @@ import renovacao as R  # noqa: E402
 def limpar():
     R.db().execute("DELETE FROM renovacoes")
     R.db().execute("DELETE FROM eventos")
+    R.db().execute("DELETE FROM usuarios")
+
+
+def gerar_cert(cn="Ana", dias_ini=-1, dias_fim=365):
+    """Certificado autoassinado para os testes de login por certificado."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    nome = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    agora = datetime.now(timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(nome).issuer_name(nome)
+            .public_key(chave.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(agora + timedelta(days=dias_ini))
+            .not_valid_after(agora + timedelta(days=dias_fim))
+            .sign(chave, hashes.SHA256()))
+    return (cert.public_bytes(serialization.Encoding.PEM),
+            cert.fingerprint(hashes.SHA256()).hex(),
+            cert.public_bytes(serialization.Encoding.DER))
+
+
+def gerar_pfx(senha="senha"):
+    """PFX protegido por senha, para testar o upload de .pfx."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import BestAvailableEncryption, pkcs12
+    from cryptography.x509.oid import NameOID
+
+    chave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    nome = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PFX")])
+    agora = datetime.now(timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(nome).issuer_name(nome)
+            .public_key(chave.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(agora - timedelta(days=1))
+            .not_valid_after(agora + timedelta(days=365))
+            .sign(chave, hashes.SHA256()))
+    dados = pkcs12.serialize_key_and_certificates(b"pfx", chave, cert, None,
+                                                 BestAvailableEncryption(senha.encode()))
+    return dados, cert.fingerprint(hashes.SHA256()).hex()
+
+
+def usuario(nome, fp, perfil="admin", ativo=1, validade="2099-01-01"):
+    R.db().execute("""INSERT INTO usuarios(nome,email,perfil,fp,sujeito,validade,ativo)
+                      VALUES(?,?,?,?,?,?,?)""",
+                   (nome, "x@y.com", perfil, fp, "CN=" + nome, validade, ativo))
 
 
 def lead(cliente, vencimento, email="a@b.com", telefone="79 99999-1111", status="a_vencer"):
@@ -185,8 +236,11 @@ class Http(unittest.TestCase):
     def setUp(self):
         limpar()
         R.K["etapas"] = {}
-        os.environ.pop("PAINEL_SENHA", None)
-        os.environ.pop("WEBHOOK_TOKEN", None)
+        for chave in ("PAINEL_SENHA", "WEBHOOK_TOKEN", "AUTH_CERT", "PROXY_SECRET"):
+            os.environ.pop(chave, None)
+
+    def cert_headers(self, pem, segredo="segredo"):
+        return {"X-Client-Cert": quote(pem.decode(), safe=""), "X-Proxy-Secret": segredo}
 
     def req(self, caminho, metodo="GET", corpo=None, headers=None):
         r = urllib.request.Request(f"http://127.0.0.1:{self.porta}{caminho}", method=metodo,
@@ -251,6 +305,100 @@ class Http(unittest.TestCase):
             self.assertEqual(self.req("/webhook/kommo?t=segredo", "POST", b"")[0], 200)
         finally:
             os.environ.pop("WEBHOOK_TOKEN", None)
+
+    # ---------- login por certificado ----------
+    def test_certificado_autoriza_e_rejeita(self):
+        pem, fp, _ = gerar_cert("Ana")
+        usuario("Ana", fp)
+        os.environ["AUTH_CERT"] = "1"
+        os.environ["PROXY_SECRET"] = "segredo"
+        try:
+            status, _, corpo = self.req("/api/eu", headers=self.cert_headers(pem))
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(corpo)["nome"], "Ana")
+            self.assertEqual(self.req("/api/eu")[0], 401)
+            self.assertEqual(self.req("/api/eu", headers=self.cert_headers(pem, "errado"))[0], 401)
+        finally:
+            os.environ.pop("AUTH_CERT", None)
+            os.environ.pop("PROXY_SECRET", None)
+
+    def test_certificado_vencido_ou_inativo(self):
+        pem, fp, _ = gerar_cert("Vencido", dias_ini=-400, dias_fim=-30)
+        usuario("Vencido", fp)
+        pem2, fp2, _ = gerar_cert("Inativo")
+        usuario("Inativo", fp2, ativo=0)
+        os.environ["AUTH_CERT"] = "1"
+        os.environ["PROXY_SECRET"] = "segredo"
+        try:
+            self.assertEqual(self.req("/api/eu", headers=self.cert_headers(pem))[0], 403)
+            self.assertEqual(self.req("/api/eu", headers=self.cert_headers(pem2))[0], 403)
+        finally:
+            os.environ.pop("AUTH_CERT", None)
+            os.environ.pop("PROXY_SECRET", None)
+
+    def test_operador_nao_acessa_administracao(self):
+        pem, fp, _ = gerar_cert("Op")
+        usuario("Op", fp, perfil="operador")
+        os.environ["AUTH_CERT"] = "1"
+        os.environ["PROXY_SECRET"] = "segredo"
+        try:
+            h = self.cert_headers(pem)
+            self.assertEqual(self.req("/api/renovacoes", headers=h)[0], 200)
+            self.assertEqual(self.req("/api/usuarios", headers=h)[0], 403)
+            self.assertEqual(self.req("/api/config", headers=h)[0], 403)
+            self.assertEqual(self.req("/api/config", "POST", b"{}",
+                                      {**h, "X-Requested-With": "fetch"})[0], 403)
+        finally:
+            os.environ.pop("AUTH_CERT", None)
+            os.environ.pop("PROXY_SECRET", None)
+
+    def test_cadastrar_certificado_pela_api(self):
+        admin_pem, admin_fp, _ = gerar_cert("Admin")
+        usuario("Admin", admin_fp)
+        novo_pem, novo_fp, _ = gerar_cert("Novo")
+        os.environ["AUTH_CERT"] = "1"
+        os.environ["PROXY_SECRET"] = "segredo"
+        try:
+            h = {**self.cert_headers(admin_pem), "X-Requested-With": "fetch"}
+            caminho = "/api/usuarios?nome=Novo&email=n@b.com&perfil=operador&arquivo=novo.pem"
+            self.assertEqual(self.req(caminho, "POST", novo_pem, h)[0], 200)
+            row = R.db().execute("SELECT nome, perfil FROM usuarios WHERE fp=?", (novo_fp,)).fetchone()
+            self.assertEqual((row["nome"], row["perfil"]), ("Novo", "operador"))
+            self.assertEqual(self.req(caminho, "POST", novo_pem, h)[0], 409)   # duplicado
+        finally:
+            os.environ.pop("AUTH_CERT", None)
+            os.environ.pop("PROXY_SECRET", None)
+
+    def test_cadastrar_pfx_com_senha(self):
+        admin_pem, admin_fp, _ = gerar_cert("Admin")
+        usuario("Admin", admin_fp)
+        pfx, fp_novo = gerar_pfx("senha")
+        os.environ["AUTH_CERT"] = "1"
+        os.environ["PROXY_SECRET"] = "segredo"
+        try:
+            h = {**self.cert_headers(admin_pem), "X-Requested-With": "fetch", "X-Pfx-Senha": "senha"}
+            self.assertEqual(self.req("/api/usuarios?nome=PFX&arquivo=x.pfx", "POST", pfx, h)[0], 200)
+            self.assertIsNotNone(R.db().execute("SELECT id FROM usuarios WHERE fp=?", (fp_novo,)).fetchone())
+            h["X-Pfx-Senha"] = "errada"
+            self.assertEqual(self.req("/api/usuarios?nome=PFX2&arquivo=y.pfx", "POST", pfx, h)[0], 400)
+        finally:
+            os.environ.pop("AUTH_CERT", None)
+            os.environ.pop("PROXY_SECRET", None)
+
+    def test_cadastrar_certificado_der(self):
+        admin_pem, admin_fp, _ = gerar_cert("Admin")
+        usuario("Admin", admin_fp)
+        _, fp_novo, der = gerar_cert("DER")
+        os.environ["AUTH_CERT"] = "1"
+        os.environ["PROXY_SECRET"] = "segredo"
+        try:
+            h = {**self.cert_headers(admin_pem), "X-Requested-With": "fetch"}
+            status, _, _ = self.req("/api/usuarios?nome=DER&arquivo=der.cer", "POST", der, h)
+            self.assertEqual(status, 200)
+            self.assertIsNotNone(R.db().execute("SELECT id FROM usuarios WHERE fp=?", (fp_novo,)).fetchone())
+        finally:
+            os.environ.pop("AUTH_CERT", None)
+            os.environ.pop("PROXY_SECRET", None)
 
 
 if __name__ == "__main__":
