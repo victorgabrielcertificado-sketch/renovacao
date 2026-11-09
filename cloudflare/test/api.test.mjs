@@ -100,19 +100,83 @@ async function main() {
       body: JSON.stringify({ usuario: "admin", senha: "teste" }),
     });
     assert.equal(ok.status, 200);
-    const cookie = (ok.headers.get("set-cookie") || "").split(";")[0];
+    const setCookie = ok.headers.get("set-cookie") || "";
+    const cookie = setCookie.split(";")[0];
     assert.match(cookie, /^renovacao_sessao=/);
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /SameSite=Lax/i);
+    assert.match(setCookie, /Path=\//i);
+    assert.equal(cookie.split("=")[1].split(".").length, 3); // JWT compacto
 
     const eu = await req("/api/eu", { headers: { Cookie: cookie } });
     assert.equal(eu.status, 200);
     assert.equal(eu.json.fonte, "sessao");
+    assert.match(eu.json.csrf, /^[0-9a-f]{32}$/);
 
     const painel = await req("/", { headers: { Cookie: cookie } });
     assert.equal(painel.status, 200);
 
-    const out = await req("/api/logout", { method: "POST", headers: { ...H, Cookie: cookie } });
+    const semCsrf = await req("/api/config", {
+      method: "POST",
+      headers: { ...H, Cookie: cookie, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(semCsrf.status, 403);
+
+    const comCsrf = await req("/api/config", {
+      method: "POST",
+      headers: { ...H, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": eu.json.csrf },
+      body: "{}",
+    });
+    assert.equal(comCsrf.status, 200);
+
+    const outSem = await req("/api/logout", { method: "POST", headers: { ...H, Cookie: cookie } });
+    assert.equal(outSem.status, 403);
+
+    const out = await req("/api/logout", {
+      method: "POST",
+      headers: { ...H, Cookie: cookie, "X-CSRF-Token": eu.json.csrf },
+    });
     assert.equal(out.status, 200);
     assert.match(out.headers.get("set-cookie") || "", /Max-Age=0/);
+  });
+
+  await passo("cabeçalhos de segurança no painel e na API", async () => {
+    const login = await req("/login");
+    assert.equal(login.status, 200);
+    for (const h of [
+      "strict-transport-security",
+      "content-security-policy",
+      "x-frame-options",
+      "x-content-type-options",
+      "referrer-policy",
+      "permissions-policy",
+      "cross-origin-opener-policy",
+      "cross-origin-resource-policy",
+    ]) {
+      assert.ok(login.headers.get(h), `login sem ${h}`);
+    }
+    assert.match(login.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+
+    const api = await req("/api/eu", { headers: { Authorization: BASIC } });
+    assert.equal(api.status, 200);
+    assert.ok(api.headers.get("strict-transport-security"));
+    assert.ok(api.headers.get("content-security-policy"));
+    assert.ok(api.headers.get("x-frame-options"));
+    assert.equal(api.headers.get("access-control-allow-origin"), null);
+  });
+
+  await passo("preflight CORS fechado", async () => {
+    const r = await req("/api/eu", { method: "OPTIONS" });
+    assert.equal(r.status, 204);
+    assert.match(r.headers.get("allow") || "", /OPTIONS/);
+    assert.equal(r.headers.get("access-control-allow-origin"), null);
+  });
+
+  await passo("fonte pública para a tela de login", async () => {
+    const r = await req("/fonts.css");
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get("content-type") || "", /text\/css/);
   });
 
   await passo("/api/eu com Cloudflare Access", async () => {
@@ -274,6 +338,29 @@ async function main() {
 
   await passo("rota inexistente retorna 404", async () => {
     assert.equal((await req("/api/naoexiste", { headers: { Authorization: BASIC } })).status, 404);
+  });
+
+  await passo("limite de tentativas de login", async () => {
+    const headers = {
+      ...H,
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "198.51.100.77",
+    };
+    for (let i = 0; i < 10; i++) {
+      const r = await req("/api/login", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ usuario: "admin", senha: "errada" }),
+      });
+      assert.equal(r.status, 401);
+    }
+    const bloqueado = await req("/api/login", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ usuario: "admin", senha: "teste" }),
+    });
+    assert.equal(bloqueado.status, 429);
+    assert.ok(bloqueado.headers.get("retry-after"));
   });
 
   console.log(`\n${passos.length} verificações OK`);

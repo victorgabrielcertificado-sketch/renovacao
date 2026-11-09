@@ -1,12 +1,13 @@
 // Protege o painel estático (o Python autenticava o "/" no próprio servidor).
 // Rotas /api/* e /webhook/* fazem a própria autenticação.
-import { authenticate, json } from "./_lib/core.js";
+import { authenticate, json, withSecurityHeaders } from "./_lib/core.js";
 
 export async function onRequest(context) {
   const { request, env, next } = context;
   const url = new URL(request.url);
 
-  if (url.pathname === "/login" || url.pathname === "/login.html") return next();
+  if (url.pathname === "/login" || url.pathname === "/login.html") return withSecurityHeaders(await next());
+  if (url.pathname === "/fonts.css" || url.pathname.startsWith("/fonts/")) return withSecurityHeaders(await next());
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/webhook/")) return next();
   if (!env.DB) return json({ erro: "binding D1 (DB) não configurado" }, 500);
 
@@ -15,9 +16,9 @@ export async function onRequest(context) {
     const accept = request.headers.get("Accept") || "";
     if (auth.status === 401 && accept.includes("text/html")) {
       const destino = "/login?next=" + encodeURIComponent(url.pathname + url.search);
-      return Response.redirect(new URL(destino, url).toString(), 302);
+      return withSecurityHeaders(Response.redirect(new URL(destino, url).toString(), 302));
     }
     return json(auth.body, auth.status, auth.extra);
   }
-  return next();
+  return withSecurityHeaders(await next());
 }

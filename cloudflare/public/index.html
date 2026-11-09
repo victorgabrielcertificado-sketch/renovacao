@@ -1,5 +1,5 @@
 <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>Renovação de certificados</title>
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
+<link href="/fonts.css" rel="stylesheet">
 <style>
 :root{--bg:#f4f6f8;--sf:#fff;--tx:#14263a;--mu:#5d6b7a;--ln:#dce2e8;--ac:#0f6f73;--ac2:#e3f1f1}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}}
@@ -53,7 +53,8 @@ const NM=Object.fromEntries(ST.map(s=>[s[0],s[1]]));
 const MN=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const mesNome=i=>MN[i][0].toUpperCase()+MN[i].slice(1);
 const el=id=>document.getElementById(id);
-const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok){let m=r.status+" "+r.statusText;try{m=(await r.json()).erro||m}catch(_){}throw new Error(m)}return r.json()};
+let CSRF="";
+const j=async(u,o={})=>{const opt={...o};const m=(opt.method||"GET").toUpperCase();if(m!=="GET"&&CSRF){opt.headers={...(opt.headers||{}),"X-CSRF-Token":CSRF}}const r=await fetch(u,opt);if(!r.ok){let m=r.status+" "+r.statusText;try{m=(await r.json()).erro||m}catch(_){}throw new Error(m)}return r.json()};
 const post=(u,b)=>j(u,{method:"POST",headers:{"X-Requested-With":"fetch",...(b instanceof Blob?{}:{"Content-Type":"application/json"})},body:b instanceof Blob?b:JSON.stringify(b??{})});
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const br=s=>s?String(s).slice(8,10)+"/"+String(s).slice(5,7)+"/"+String(s).slice(0,4):"—";
@@ -104,8 +105,8 @@ async function salvar(){
 async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
 async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
 async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await render()}catch(e){toast("Falha ao importar: "+e.message)}}
-async function carregarEu(){try{EU=await j("/api/eu");el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`+(EU.validade?` · certificado válido até ${br(EU.validade)}`:"")+(EU.fonte?` · via ${EU.fonte}`:"");const adm=EU.perfil==="admin";el("n2").hidden=!adm;el("n3").hidden=!adm;el("sair").hidden=EU.fonte!=="sessao"&&EU.fonte!=="local";if(!adm&&!el("s2").hidden)aba(1)}catch(e){}}
-async function sair(){try{await fetch("/api/logout",{method:"POST",headers:{"X-Requested-With":"fetch"}})}catch(e){}location.href="/login"}
+async function carregarEu(){try{EU=await j("/api/eu");CSRF=EU.csrf||"";el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`+(EU.validade?` · certificado válido até ${br(EU.validade)}`:"")+(EU.fonte?` · via ${EU.fonte}`:"");const adm=EU.perfil==="admin";el("n2").hidden=!adm;el("n3").hidden=!adm;el("sair").hidden=EU.fonte!=="sessao"&&EU.fonte!=="local";if(!adm&&!el("s2").hidden)aba(1)}catch(e){}}
+async function sair(){try{await fetch("/api/logout",{method:"POST",headers:{"X-Requested-With":"fetch","X-CSRF-Token":CSRF}})}catch(e){}location.href="/login"}
 async function usuarios(){try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
 async function ativar(id,ativo){try{await post("/api/usuarios/ativo",{id,ativo});toast(ativo?"Usuário ativado.":"Usuário desativado.")}catch(e){toast("Falha: "+e.message);usuarios()}}
 async function remover(id){if(!confirm("Remover este usuário?"))return;try{await post("/api/usuarios/remover",{id});toast("Usuário removido.");usuarios()}catch(e){toast("Falha: "+e.message)}}

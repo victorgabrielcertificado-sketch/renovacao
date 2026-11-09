@@ -1,4 +1,5 @@
 -- Dados de teste para o ambiente local (D1 --local).
+DELETE FROM login_tentativas;
 DELETE FROM eventos;
 DELETE FROM renovacoes;
 DELETE FROM usuarios;

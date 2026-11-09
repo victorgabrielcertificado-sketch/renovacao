@@ -1,6 +1,8 @@
 # Copie para .dev.vars e ajuste. NÃO comite .dev.vars.
 PAINEL_USER=admin
 PAINEL_SENHA=troque-esta-senha
+# Opcional: chave própria do JWT de sessão (recomendada em produção).
+SESSION_SECRET=troque-este-segredo-de-sessao
 WEBHOOK_TOKEN=troque-este-token
 CRON_TOKEN=troque-este-token
 

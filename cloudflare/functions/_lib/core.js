@@ -16,17 +16,48 @@ export class HttpError extends Error {
   }
 }
 
-export const json = (body, status = 200, extra = {}) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
-      ...extra,
-    },
+export const CSP =
+  "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; " +
+  "script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; " +
+  "frame-ancestors 'none'; object-src 'none'; media-src 'none'; worker-src 'none'; manifest-src 'self'";
+
+export const SECURITY_HEADERS = {
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "geolocation=(), camera=(), microphone=(), payment=(), usb=()",
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Content-Security-Policy": CSP,
+};
+
+export function withSecurityHeaders(response) {
+  const headers = new Headers(response.headers);
+  for (const [nome, valor] of Object.entries(SECURITY_HEADERS)) headers.set(nome, valor);
+  if ((headers.get("Content-Type") || "").includes("text/html")) headers.set("Cache-Control", "no-store");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
   });
+}
+
+export const json = (body, status = 200, extra = {}) => {
+  const headers = new Headers({
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  for (const [nome, valor] of Object.entries(extra)) {
+    if (nome === "Set-Cookie" && Array.isArray(valor)) {
+      for (const cookie of valor) headers.append(nome, cookie);
+    } else {
+      headers.set(nome, valor);
+    }
+  }
+  for (const [nome, valor] of Object.entries(SECURITY_HEADERS)) headers.set(nome, valor);
+  return new Response(JSON.stringify(body), { status, headers });
+};
 
 const db = (env) => env.DB;
 const all = async (env, sql, ...args) =>
@@ -375,6 +406,7 @@ async function certInfoFromHeader(raw) {
 }
 
 const SESSION_COOKIE = "renovacao_sessao";
+const SESSION_COOKIE_HOST = "__Host-renovacao_sessao";
 const SESSION_TTL = 12 * 3600; // 12 horas
 
 function b64url(bytes) {
@@ -405,7 +437,9 @@ function getCookie(request, nome) {
 }
 
 async function chaveSessao(env) {
-  const segredo = env.SESSION_SECRET || env.PAINEL_SENHA || "dev";
+  const segredo = env.SESSION_SECRET
+    ? env.SESSION_SECRET + "|" + (env.PAINEL_SENHA || "")
+    : env.PAINEL_SENHA || "dev";
   return await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(segredo),
@@ -415,37 +449,109 @@ async function chaveSessao(env) {
   );
 }
 
+function tokenAleatorio(bytes = 16) {
+  const a = new Uint8Array(bytes);
+  crypto.getRandomValues(a);
+  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function b64urlJson(obj) {
+  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
+}
+
 export async function criarSessao(env, user) {
-  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL;
-  const payload = b64url(new TextEncoder().encode(JSON.stringify({ u: user.nome, p: user.perfil, exp })));
+  const agora = Math.floor(Date.now() / 1000);
+  const header = b64urlJson({ alg: "HS256", typ: "JWT" });
+  const payload = b64urlJson({
+    sub: user.nome,
+    role: user.perfil,
+    iat: agora,
+    exp: agora + SESSION_TTL,
+    csrf: tokenAleatorio(16),
+  });
+  const dados = header + "." + payload;
   const chave = await chaveSessao(env);
-  const assinatura = await crypto.subtle.sign("HMAC", chave, new TextEncoder().encode(payload));
-  return payload + "." + b64url(new Uint8Array(assinatura));
+  const assinatura = await crypto.subtle.sign("HMAC", chave, new TextEncoder().encode(dados));
+  return dados + "." + b64url(new Uint8Array(assinatura));
 }
 
 export async function lerSessao(env, token) {
-  if (!token || !token.includes(".")) return null;
-  const [payload, assinatura] = token.split(".");
+  if (!token || token.split(".").length !== 3) return null;
+  const [header, payload, assinatura] = token.split(".");
   try {
+    const cabecalho = JSON.parse(new TextDecoder().decode(b64urlDecode(header)));
+    if (!cabecalho || cabecalho.alg !== "HS256") return null;
     const chave = await chaveSessao(env);
     const ok = await crypto.subtle.verify(
       "HMAC",
       chave,
       b64urlDecode(assinatura),
-      new TextEncoder().encode(payload),
+      new TextEncoder().encode(header + "." + payload),
     );
     if (!ok) return null;
     const dados = JSON.parse(new TextDecoder().decode(b64urlDecode(payload)));
-    if (!dados || !dados.exp || dados.exp < Math.floor(Date.now() / 1000)) return null;
-    return { nome: dados.u || "Administrador", perfil: dados.p === "admin" ? "admin" : "operador", validade: null, fonte: "sessao" };
+    const agora = Math.floor(Date.now() / 1000);
+    if (!dados || !dados.exp || dados.exp < agora || !dados.iat || dados.iat > agora + 60) return null;
+    return {
+      nome: dados.sub || "Administrador",
+      perfil: dados.role === "admin" ? "admin" : "operador",
+      validade: null,
+      fonte: "sessao",
+      csrf: typeof dados.csrf === "string" ? dados.csrf : "",
+    };
   } catch {
     return null;
   }
 }
 
+const LOGIN_MAX = 10;
+const LOGIN_JANELA = 15 * 60; // 15 minutos
+
+async function chaveRate(env, request) {
+  const ip = (request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "local")
+    .split(",")[0]
+    .trim();
+  const sal = env.SESSION_SECRET || env.PAINEL_SENHA || "dev";
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip + "|" + sal));
+  return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function bloqueioLogin(env, chave) {
+  const agora = Math.floor(Date.now() / 1000);
+  const row = await first(env, "SELECT contagem, expira FROM login_tentativas WHERE chave=?", chave);
+  if (!row) return 0;
+  if (Number(row.expira) <= agora) {
+    await run(env, "DELETE FROM login_tentativas WHERE chave=?", chave);
+    return 0;
+  }
+  return Number(row.contagem) >= LOGIN_MAX ? Math.max(1, Number(row.expira) - agora) : 0;
+}
+
+async function registrarFalha(env, chave) {
+  const agora = Math.floor(Date.now() / 1000);
+  const expira = agora + LOGIN_JANELA;
+  await run(
+    env,
+    `INSERT INTO login_tentativas(chave,contagem,expira) VALUES(?,1,?)
+     ON CONFLICT(chave) DO UPDATE SET
+       contagem = CASE WHEN login_tentativas.expira <= ? THEN 1 ELSE login_tentativas.contagem + 1 END,
+       expira = CASE WHEN login_tentativas.expira <= ? THEN ? ELSE login_tentativas.expira END`,
+    chave,
+    expira,
+    agora,
+    agora,
+    expira,
+  );
+  await run(env, "DELETE FROM login_tentativas WHERE expira < ?", agora - 3600);
+}
+
+async function limparFalhas(env, chave) {
+  await run(env, "DELETE FROM login_tentativas WHERE chave=?", chave);
+}
+
 export async function authenticate(env, request, url) {
   if (url.pathname.startsWith("/webhook/")) return { ok: true, user: null };
-  if (url.pathname === "/api/login" || url.pathname === "/api/logout") return { ok: true, user: null };
+  if (url.pathname === "/api/login") return { ok: true, user: null };
 
   // chamada automática da régua (cron externo) com token dedicado
   if (
@@ -480,7 +586,10 @@ export async function authenticate(env, request, url) {
 
   // sessão criada pelo formulário de login (cookie HMAC)
   if (senha) {
-    const sess = await lerSessao(env, getCookie(request, SESSION_COOKIE));
+    const sess = await lerSessao(
+      env,
+      getCookie(request, SESSION_COOKIE_HOST) || getCookie(request, SESSION_COOKIE),
+    );
     if (sess) return { ok: true, user: sess };
   }
 
@@ -723,8 +832,23 @@ async function rotaPost(env, K, url, request, user, admin) {
   // CSRF: navegador não consegue mandar este header cross-site sem preflight
   if (request.headers.get("X-Requested-With") !== "fetch") throw new HttpError(403, "requisição inválida");
 
+  // dupla proteção para sessões por cookie: token sincronizado com o JWT
+  if (user?.fonte === "sessao") {
+    const csrf = request.headers.get("X-CSRF-Token") || "";
+    if (!safeEqual(csrf, user.csrf || "")) throw new HttpError(403, "CSRF token inválido");
+  }
+
   if (p === "/api/login") {
     if (!env.PAINEL_SENHA) throw new HttpError(400, "login por senha desativado");
+    const origem = request.headers.get("Origin");
+    if (origem && origem !== url.origin) throw new HttpError(403, "origem inválida");
+    const chave = await chaveRate(env, request);
+    const espera = await bloqueioLogin(env, chave);
+    if (espera) {
+      return json({ erro: "muitas tentativas; tente novamente mais tarde" }, 429, {
+        "Retry-After": String(espera),
+      });
+    }
     let d;
     try {
       d = JSON.parse(new TextDecoder().decode(body) || "{}");
@@ -734,19 +858,28 @@ async function rotaPost(env, K, url, request, user, admin) {
     const usuario = String(d?.usuario || "admin").trim();
     const informada = String(d?.senha || "");
     if (!safeEqual(usuario, env.PAINEL_USER || "admin") || !safeEqual(informada, env.PAINEL_SENHA)) {
+      await registrarFalha(env, chave);
       throw new HttpError(401, "usuário ou senha inválidos");
     }
+    await limparFalhas(env, chave);
     const token = await criarSessao(env, { nome: "Administrador", perfil: "admin" });
-    const secure = url.protocol === "https:" ? "; Secure" : "";
+    const seguro = url.protocol === "https:";
+    const nome = seguro ? SESSION_COOKIE_HOST : SESSION_COOKIE;
+    const secure = seguro ? "; Secure" : "";
     return json({ ok: true }, 200, {
-      "Set-Cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}${secure}`,
+      "Set-Cookie": `${nome}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}${secure}`,
     });
   }
 
   if (p === "/api/logout") {
-    const secure = url.protocol === "https:" ? "; Secure" : "";
+    const seguro = url.protocol === "https:";
+    const secure = seguro ? "; Secure" : "";
+    const atributos = `Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
     return json({ ok: true }, 200, {
-      "Set-Cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+      "Set-Cookie": [
+        `${SESSION_COOKIE}=; ${atributos}`,
+        `${SESSION_COOKIE_HOST}=; ${atributos}`,
+      ],
     });
   }
 
@@ -820,6 +953,18 @@ export async function handleApi(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   try {
+    const method = request.method.toUpperCase();
+    // API é same-origin: não emitimos Access-Control-Allow-Origin de propósito.
+    if (method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          Allow: "GET, POST, OPTIONS",
+          "Cache-Control": "no-store",
+          ...SECURITY_HEADERS,
+        },
+      });
+    }
     if (!env.DB) return json({ erro: "binding D1 (DB) não configurado" }, 500);
     const auth = await authenticate(env, request, url);
     if (!auth.ok) return json(auth.body, auth.status, auth.extra);
@@ -827,10 +972,9 @@ export async function handleApi(context) {
     const user = auth.user;
     const admin = user?.perfil === "admin";
     const K = await loadConfig(env);
-    const method = request.method.toUpperCase();
     if (method === "GET") return await rotaGet(env, K, url, user, admin);
     if (method === "POST") return await rotaPost(env, K, url, request, user, admin);
-    return json({ erro: "método não permitido" }, 405, { Allow: "GET, POST" });
+    return json({ erro: "método não permitido" }, 405, { Allow: "GET, POST, OPTIONS" });
   } catch (e) {
     if (e instanceof HttpError) return json({ erro: e.message }, e.status);
     console.error("erro API:", e);

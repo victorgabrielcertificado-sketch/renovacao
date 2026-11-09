@@ -53,7 +53,7 @@ Em outro terminal:
 
 ```bash
 npm test              # 8 testes unitários (planilha, datas, certificado, auth)
-npm run test:api      # 18 verificações de integração (servidor precisa estar rodando)
+npm run test:api      # 22 verificações de integração (servidor precisa estar rodando)
 ```
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
@@ -140,6 +140,41 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 - O Basic Auth continua aceito para scripts/CLI.
 - Não há limite de tentativas embutido; para produção, combine com Cloudflare Access ou
   Rate Limiting do Cloudflare.
+
+## Segurança
+
+| Item | Como está implementado |
+|---|---|
+| **TLS 1.2/1.3** | Terminação TLS automática da Cloudflare Pages; o app só responde atrás de HTTPS em produção. |
+| **HSTS** | `Strict-Transport-Security: max-age=31536000; includeSubDomains` em `_headers` e em todas as respostas das Functions. |
+| **CSP** | `default-src 'self'`, fontes auto-hospedadas, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`. Ainda usa `'unsafe-inline'` para os scripts/estilos inline do painel (ver limitações abaixo). |
+| **Clickjacking** | `X-Frame-Options: DENY` + `frame-ancestors 'none'`. |
+| **MIME sniffing** | `X-Content-Type-Options: nosniff`. |
+| **Referrer** | `Referrer-Policy: no-referrer`. |
+| **CORS** | API **same-origin**: nenhum `Access-Control-Allow-Origin` é emitido; `OPTIONS` responde 204 sem liberar origem. |
+| **CSRF** | Header `X-Requested-With: fetch` em todo POST + token `X-CSRF-Token` vinculado ao JWT da sessão; cookie `SameSite=Lax`. |
+| **Cookies** | `HttpOnly`, `Secure` em HTTPS, `SameSite=Lax`, `Path=/`, 12 h; em HTTPS usa o prefixo `__Host-`. |
+| **Rate limiting** | Login: 10 falhas por IP a cada 15 min (tabela `login_tentativas`, resposta 429 + `Retry-After`). Para as demais rotas, use as regras de Rate Limiting/WAF da Cloudflare. |
+| **WAF / DDoS** | Camada de borda da Cloudflare. Regras de WAF, Rate Limiting e Access exigem um **domínio próprio** apontado para o projeto Pages (o `*.pages.dev` não pertence à sua zona). |
+| **OAuth 2.0 / OIDC** | **Cloudflare Access** (Google, GitHub, OTP por e-mail etc.) com `TRUST_ACCESS=1`; cadastre os e-mails na aba **Usuários**. |
+| **Sessão/JWT** | JWT compacto HS256 com `sub`, `role`, `iat`, `exp` (12 h) e `csrf`, assinado com `SESSION_SECRET` + `PAINEL_SENHA`. |
+| **SQL injection** | Todas as consultas D1 usam prepared statements com bind de parâmetros. |
+| **XSS** | CSP + escape (`esc()`) de todo dado vindo do banco/planilha antes de ir para o HTML. |
+
+### Limitações e próximos passos de segurança
+
+- **CSP com `'unsafe-inline'`:** o painel tem um bloco `<script>` e handlers `onclick` inline. Para remover
+  essa permissão, é necessário extrair o JS para um arquivo e trocar os `onclick` por `addEventListener`.
+- **WAF/Access em `*.pages.dev`:** anexe um domínio próprio (Pages → Custom domains) para habilitar
+  WAF gerenciado, Rate Limiting por rota e Cloudflare Access com política por e-mail.
+- **HSTS preload:** não se aplica a `*.pages.dev` (sufixo público). Em domínio próprio, envie o domínio
+  para a lista de preload depois de confirmar que todos os subdomínios são HTTPS.
+- **Rotação de segredos:** trocar `PAINEL_SENHA` ou `SESSION_SECRET` invalida todas as sessões.
+  Gere um `SESSION_SECRET` forte com:
+  ```bash
+  npx wrangler pages secret put SESSION_SECRET --project-name renovacao
+  ```
+- **Login por Basic Auth:** mantido para scripts/CLI; o uso normal é o formulário com cookie.
 
 ## Login com Cloudflare Access (recomendado)
 
