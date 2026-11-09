@@ -1,0 +1,24 @@
+{
+  "name": "renovacao-pages",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Versão Cloudflare Pages (Functions + D1) do painel de renovação de certificados",
+  "scripts": {
+    "dev": "wrangler pages dev public",
+    "deploy": "wrangler pages deploy public --project-name renovacao",
+    "db:local": "wrangler d1 execute renovacao --local --file=schema.sql",
+    "db:seed": "wrangler d1 execute renovacao --local --file=test/seed.sql",
+    "db:remote": "wrangler d1 execute renovacao --remote --file=schema.sql",
+    "test": "node --test test/unit.test.mjs",
+    "test:api": "node test/api.test.mjs"
+  },
+  "dependencies": {
+    "@peculiar/x509": "^3.1.0",
+    "reflect-metadata": "^0.2.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}

@@ -1,0 +1,248 @@
+// Teste de integração da versão Cloudflare Pages.
+// Requer o servidor local: npm run dev (porta 8788) e o banco semeado (npm run db:seed).
+import "reflect-metadata";
+import assert from "node:assert/strict";
+import * as x509 from "@peculiar/x509";
+import { certInfo } from "../functions/_lib/certs.js";
+
+const BASE = process.env.BASE_URL || "http://127.0.0.1:8788";
+const BASIC = "Basic " + Buffer.from("admin:teste").toString("base64");
+const ACCESS_OP = { "Cf-Access-Authenticated-User-Email": "op@teste.com" };
+const H = { "X-Requested-With": "fetch" };
+
+async function req(path, { method = "GET", headers = {}, body } = {}) {
+  const r = await fetch(BASE + path, { method, headers, body, redirect: "manual" });
+  const text = await r.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    /* html */
+  }
+  return { status: r.status, text, json, headers: r.headers };
+}
+
+async function esperar() {
+  for (let i = 0; i < 120; i++) {
+    try {
+      const r = await fetch(BASE + "/", { headers: { Authorization: BASIC } });
+      if (r.status) return;
+    } catch {
+      /* ainda subindo */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("servidor não respondeu em " + BASE);
+}
+
+const passos = [];
+async function passo(nome, fn) {
+  await fn();
+  passos.push(nome);
+  console.log("  ok -", nome);
+}
+
+async function gerarCert(cn) {
+  const alg = { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" };
+  const keys = await crypto.subtle.generateKey(alg, true, ["sign", "verify"]);
+  const cert = await x509.X509CertificateGenerator.createSelfSigned({
+    serialNumber: "01",
+    name: `CN=${cn}`,
+    notBefore: new Date(Date.now() - 86400000),
+    notAfter: new Date(Date.now() + 86400000 * 30),
+    signingAlgorithm: alg,
+    keys,
+  });
+  const pem = cert.toString("pem");
+  return { pem, info: await certInfo("x.pem", pem) };
+}
+
+async function main() {
+  await esperar();
+  console.log("Servidor:", BASE);
+
+  await passo("painel exige autenticação", async () => {
+    assert.equal((await req("/")).status, 401);
+  });
+
+  await passo("Basic Auth abre o painel", async () => {
+    const r = await req("/", { headers: { Authorization: BASIC } });
+    assert.equal(r.status, 200);
+    assert.match(r.text, /Renovação de certificados/);
+  });
+
+  await passo("/api/eu com Basic Auth", async () => {
+    const r = await req("/api/eu", { headers: { Authorization: BASIC } });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.perfil, "admin");
+  });
+
+  await passo("/api/eu com Cloudflare Access", async () => {
+    const r = await req("/api/eu", { headers: ACCESS_OP });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.nome, "Operador");
+    assert.equal(r.json.perfil, "operador");
+    assert.equal(r.json.fonte, "access");
+  });
+
+  await passo("operador não acessa administração", async () => {
+    assert.equal((await req("/api/usuarios", { headers: ACCESS_OP })).status, 403);
+    assert.equal((await req("/api/config", { headers: ACCESS_OP })).status, 403);
+    assert.equal((await req("/api/renovacoes", { headers: ACCESS_OP })).status, 200);
+  });
+
+  await passo("métricas e lista do mês", async () => {
+    const m = await req("/api/metricas?mes=2026-11", { headers: { Authorization: BASIC } });
+    assert.equal(m.status, 200);
+    assert.equal(m.json.total, 2); // Alfa e Beta vencem em novembro
+    assert.equal(m.json.funil.pago, 1);
+    const l = await req("/api/renovacoes?mes=2026-11", { headers: { Authorization: BASIC } });
+    assert.equal(l.status, 200);
+    assert.equal(l.json.length, 2);
+  });
+
+  await passo("mês inválido retorna 400", async () => {
+    assert.equal((await req("/api/metricas?mes=2026-13", { headers: { Authorization: BASIC } })).status, 400);
+  });
+
+  await passo("avançar status exige CSRF e grava histórico", async () => {
+    const lista = await req("/api/renovacoes?mes=2026-12", { headers: { Authorization: BASIC } });
+    const gama = lista.json.find((x) => x.cliente === "Gama Ltda");
+    assert.ok(gama, "Gama não encontrada");
+    assert.equal(
+      (await req("/api/avancar", { method: "POST", headers: { Authorization: BASIC, "Content-Type": "application/json" }, body: JSON.stringify({ id: gama.id, status: "agendado" }) })).status,
+      403,
+    );
+    const ok = await req("/api/avancar", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: gama.id, status: "agendado" }),
+    });
+    assert.equal(ok.status, 200);
+    const hist = await req(`/api/historico?id=${gama.id}`, { headers: { Authorization: BASIC } });
+    assert.equal(hist.status, 200);
+    assert.ok(hist.json.some((e) => e.tipo === "mudanca_etapa" && e.resultado === "agendado"));
+  });
+
+  await passo("evento manual é registrado", async () => {
+    const lista = await req("/api/renovacoes?mes=2026-12", { headers: { Authorization: BASIC } });
+    const id = lista.json[0].id;
+    const r = await req("/api/evento", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, tipo: "ligacao", canal: "telefone", resultado: "atendeu", detalhe: "teste" }),
+    });
+    assert.equal(r.status, 200);
+    const hist = await req(`/api/historico?id=${id}`, { headers: { Authorization: BASIC } });
+    assert.ok(hist.json.some((e) => e.tipo === "ligacao" && e.detalhe === "teste"));
+  });
+
+  await passo("régua por cron token", async () => {
+    const r = await req("/api/regua?t=cron", { method: "POST", headers: H, body: "" });
+    assert.equal(r.status, 200);
+    assert.equal(typeof r.json.notificadas, "number");
+  });
+
+  await passo("webhook da Kommo aplica etapa", async () => {
+    assert.equal(
+      (await req("/webhook/kommo", { method: "POST", body: "" })).status,
+      403,
+    );
+    const body = "leads[status][0][id]=999&leads[status][0][status_id]=777";
+    const r = await req("/webhook/kommo?t=segredo", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    assert.equal(r.status, 200);
+    const lista = await req("/api/renovacoes?mes=2026-11", { headers: { Authorization: BASIC } });
+    assert.equal(lista.json.find((x) => x.cliente === "Alfa Ltda").status, "agendado");
+  });
+
+  await passo("importação CSV (novas e atualizadas)", async () => {
+    const csv = "Cliente;Vencimento;Valor\nImportada API;15/01/2027;R$ 99,90\n";
+    const url = "/api/importar?nome=teste.csv";
+    const a = await req(url, { method: "POST", headers: { Authorization: BASIC, ...H }, body: csv });
+    assert.equal(a.status, 200);
+    assert.equal(a.json.novas, 1);
+    const b = await req(url, { method: "POST", headers: { Authorization: BASIC, ...H }, body: csv });
+    assert.equal(b.status, 200);
+    assert.equal(b.json.atualizadas, 1);
+  });
+
+  await passo("configuração valida URL e funil", async () => {
+    const invalida = await req("/api/config", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "ftp://x" }),
+    });
+    assert.equal(invalida.status, 400);
+    const ok = await req("/api/config", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://teste.kommo.com", pipeline: "123", etapas: { agendado: 777 } }),
+    });
+    assert.equal(ok.status, 200);
+    const c = await req("/api/config", { headers: { Authorization: BASIC } });
+    assert.equal(c.json.url, "https://teste.kommo.com");
+    assert.equal(c.json.etapas.agendado, 777);
+  });
+
+  await passo("cadastro de certificado e login por certificado", async () => {
+    const { pem, info } = await gerarCert("Cert API");
+    const q = `?nome=Cert API&email=cert@teste.com&perfil=admin&arquivo=cert.pem`;
+    const r = await req("/api/usuarios" + q, {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H },
+      body: pem,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.validade, info.fim);
+
+    const headers = {
+      "X-Client-Cert": encodeURIComponent(pem),
+      "X-Proxy-Secret": "segredo",
+    };
+    const eu = await req("/api/eu", { headers });
+    assert.equal(eu.status, 200);
+    assert.equal(eu.json.fonte, "certificado");
+    assert.equal(eu.json.perfil, "admin");
+
+    const errado = await req("/api/eu", { headers: { ...headers, "X-Proxy-Secret": "x" } });
+    assert.equal(errado.status, 401);
+
+    const dup = await req("/api/usuarios" + q, {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H },
+      body: pem,
+    });
+    assert.equal(dup.status, 409);
+  });
+
+  await passo("cadastro só de e-mail (Access)", async () => {
+    const q = "?nome=Email API&email=email@teste.com&perfil=operador";
+    const r = await req("/api/usuarios" + q, {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H },
+      body: "",
+    });
+    assert.equal(r.status, 200);
+    const eu = await req("/api/eu", {
+      headers: { "Cf-Access-Authenticated-User-Email": "email@teste.com" },
+    });
+    assert.equal(eu.status, 200);
+    assert.equal(eu.json.perfil, "operador");
+  });
+
+  await passo("rota inexistente retorna 404", async () => {
+    assert.equal((await req("/api/naoexiste", { headers: { Authorization: BASIC } })).status, 404);
+  });
+
+  console.log(`\n${passos.length} verificações OK`);
+}
+
+main().catch((e) => {
+  console.error("\nFALHOU:", e.message);
+  console.error(e);
+  process.exit(1);
+});

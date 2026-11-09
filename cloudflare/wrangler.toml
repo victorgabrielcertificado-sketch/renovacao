@@ -1,0 +1,14 @@
+name = "renovacao"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Substitua database_id pelo ID retornado por:
+#   npx wrangler d1 create renovacao
+[[d1_databases]]
+binding = "DB"
+database_name = "renovacao"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[vars]
+# Depois de configurar o Cloudflare Access, troque para "1".
+TRUST_ACCESS = "0"

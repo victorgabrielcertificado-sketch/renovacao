@@ -1,0 +1,114 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>Renovação de certificados</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f4f6f8;--sf:#fff;--tx:#14263a;--mu:#5d6b7a;--ln:#dce2e8;--ac:#0f6f73;--ac2:#e3f1f1}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}}
+:root[data-theme="dark"]{--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+header{background:var(--sf);border-bottom:1px solid var(--ln);padding:14px 20px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}header h1{font-size:16px;font-weight:800;margin:0 auto 0 0}
+nav button{background:none;border:0;font:inherit;font-weight:600;color:var(--mu);padding:6px 2px;margin-left:16px;cursor:pointer;border-bottom:2px solid transparent}nav button[aria-current="true"]{color:var(--tx);border-color:var(--ac)}
+main{max-width:1080px;margin:0 auto;padding:20px}.topo{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}.topo h2{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:0 auto 0 0}
+button.b{font:inherit;font-weight:600;background:var(--sf);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:7px 12px;cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button.p{color:#0b1a1c}}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.nums{display:flex;gap:28px;flex-wrap:wrap;margin:10px 0 14px}.nums div{font-size:13px;color:var(--mu)}.nums b{display:block;font-size:26px;color:var(--tx);font-weight:800;line-height:1.1}
+.fita{display:flex;height:26px;border-radius:6px;overflow:hidden;background:var(--ln)}.fita i{display:block;min-width:3px}
+.leg{display:flex;gap:6px 16px;flex-wrap:wrap;margin:10px 0 20px;font-size:13px}.leg span{display:flex;align-items:center;gap:6px}.leg u{width:10px;height:10px;border-radius:3px;display:inline-block}
+.cx{background:var(--sf);border:1px solid var(--ln);border-radius:10px;overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:640px}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--ln);white-space:nowrap}
+th{font-size:12px;color:var(--mu);font-weight:600}tr:last-child td{border-bottom:0}tr.sel td{background:var(--ac2)}
+select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}.lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
+h3{font-size:15px;margin:24px 0 8px}.hist{margin:0;padding:12px 16px;list-style:none;font-size:13px}.hist li{padding:4px 0;border-bottom:1px dashed var(--ln)}.hist li:last-child{border:0}.hist time{color:var(--mu);margin-right:10px}
+.bar{display:inline-block;height:8px;border-radius:4px;background:var(--ac);vertical-align:middle;margin-right:8px}
+.cfg label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}.cfg input,.cfg select{display:block;margin-top:4px;width:min(420px,100%)}.et{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin:8px 0 14px}.et label{margin:0}
+#msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:5}#msg.on{opacity:1}
+</style></head><body>
+<header><h1>Renovação de certificados</h1><nav><button id="n1" onclick="aba(1)" aria-current="true">Renovações do mês</button><button id="n2" onclick="aba(2)" aria-current="false">Configurações</button><button id="n3" onclick="aba(3)" aria-current="false" hidden>Usuários</button></nav></header>
+<main><section id="s1">
+<div class="topo"><h2 id="tit"></h2><button class="b" onclick="nav(-1)" aria-label="Mês anterior">◀</button><button class="b" onclick="nav(1)" aria-label="Próximo mês">▶</button><button class="b p" onclick="regua()">Rodar régua agora</button></div>
+<div class="nums" id="nums"></div><div class="fita" id="fita" aria-hidden="true"></div><div class="leg" id="leg"></div>
+<div class="cx"><table id="tab"></table></div>
+<h3>Histórico do lead</h3><div class="cx"><ul class="hist" id="hst"><li>Clique em “Histórico” em uma linha da tabela.</li></ul></div>
+<h3>Taxa de renovação por mês de vencimento</h3><div class="cx"><table id="meses"></table></div></section>
+<section id="s2" hidden class="cfg"><h3>Dados</h3>
+<input type="file" id="arq" aria-label="Planilha" accept=".xlsx,.xls,.csv"> <button class="b" onclick="imp()">Importar planilha</button>
+<h3>Integração com a Kommo</h3>
+<label>URL da conta<input id="cu" placeholder="https://suaconta.kommo.com" inputmode="url"></label><label>Token de longa duração<input id="ct" type="password" autocomplete="off"></label><label>ID do funil<input id="cp" inputmode="numeric"></label>
+<p style="font-size:13px;color:var(--mu)">ID da etapa no Kommo para cada status:</p><div class="et" id="ce"></div>
+<button class="b p" onclick="salvar()">Salvar</button> <button class="b" onclick="testar()">Testar conexão</button> <button class="b" onclick="limparToken()">Limpar token</button>
+<p style="font-size:13px;color:var(--mu)">Webhook para cadastrar na Kommo (mudança de etapa): <code id="wh"></code> (acrescente <code>?t=SEU_WEBHOOK_TOKEN</code> se definiu essa variável)</p></section>
+<section id="s3" hidden class="cfg"><h3>Usuários e certificados</h3>
+<p id="eu" style="font-size:13px;color:var(--mu)"></p>
+<div class="cx"><table id="usrs"></table></div>
+<h3>Cadastrar certificado</h3>
+<label>Nome<input id="un" autocomplete="off"></label>
+<label>E-mail<input id="ue" type="email" autocomplete="off"></label>
+<label>Perfil<select id="up"><option value="operador">Operador</option><option value="admin">Administrador</option></select></label>
+<label>Certificado (.cer/.crt/.pem/.der) — opcional no Access<input type="file" id="uf" accept=".cer,.crt,.pem,.der"></label>
+<button class="b p" onclick="cadastrarCert()">Cadastrar com certificado</button> <button class="b" onclick="cadastrarEmail()">Cadastrar só e-mail (Access)</button>
+<p style="font-size:13px;color:var(--mu)">Na versão Cloudflare o login pode ser feito pelo <b>Cloudflare Access</b> (e-mail) ou por certificado, quando <code>AUTH_CERT=1</code> e o proxy/mTLS envia o cabeçalho <code>X-Client-Cert</code> (ou <code>CERT_HEADER</code>) com <code>X-Proxy-Secret</code>. Só a parte pública é guardada; <code>.pfx</code>/<code>.p12</code> não são aceitos aqui.</p></section></main>
+<div id="msg" role="status" aria-live="polite"></div>
+<script>
+const ST=[["a_vencer","A vencer","#8f9aa7"],["email_enviado","E-mail enviado","#6a8fc2"],["whatsapp_enviado","WhatsApp enviado","#2e9c8e"],["agendado","Agendado","#d6a01e"],["emitido","Emitido","#8f6cc0"],["pago","Pago","#2d7d4e"],["perdido","Perdido","#b4432f"]];
+const NM=Object.fromEntries(ST.map(s=>[s[0],s[1]]));
+const MN=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const mesNome=i=>MN[i][0].toUpperCase()+MN[i].slice(1);
+const el=id=>document.getElementById(id);
+const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok){let m=r.status+" "+r.statusText;try{m=(await r.json()).erro||m}catch(_){}throw new Error(m)}return r.json()};
+const post=(u,b)=>j(u,{method:"POST",headers:{"X-Requested-With":"fetch",...(b instanceof Blob?{}:{"Content-Type":"application/json"})},body:b instanceof Blob?b:JSON.stringify(b??{})});
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const br=s=>s?String(s).slice(8,10)+"/"+String(s).slice(5,7)+"/"+String(s).slice(0,4):"—";
+const moeda=v=>v==null||v===""?"—":"R$ "+Number(v).toLocaleString("pt-BR",{maximumFractionDigits:2});
+const hj=new Date();let mes=hj.getFullYear()+"-"+String(hj.getMonth()+1).padStart(2,"0"),aberto=null,LISTA=[],EU={nome:"local",perfil:"admin"};
+function toast(t){const m=el("msg");m.textContent=t;m.classList.add("on");clearTimeout(toast.h);toast.h=setTimeout(()=>m.classList.remove("on"),2800)}
+function aba(n){el("s1").hidden=n!=1;el("s2").hidden=n!=2;el("s3").hidden=n!=3;el("n1").setAttribute("aria-current",String(n==1));el("n2").setAttribute("aria-current",String(n==2));el("n3").setAttribute("aria-current",String(n==3));if(n==2)cfgLoad();if(n==3)usuarios()}
+function nav(d){const[y,m]=mes.split("-").map(Number),t=new Date(y,m-1+d,1);mes=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0");aberto=null;render()}
+async function render(){
+ try{
+  const q="?mes="+encodeURIComponent(mes),[m,L]=await Promise.all([j("/api/metricas"+q),j("/api/renovacoes"+q)]);LISTA=L;
+  const[y,mm]=mes.split("-");el("tit").textContent=mesNome(Number(mm)-1)+" de "+y;
+  el("nums").innerHTML=`<div><b>${m.total}</b>vencem no mês</div><div><b>${m.taxa_geral}%</b>renovados</div><div><b>${moeda(m.receita)}</b>recebidos</div>`;
+  el("fita").innerHTML=ST.filter(s=>m.funil[s[0]]).map(s=>`<i style="flex:${m.funil[s[0]]};background:${s[2]}" title="${s[1]}: ${m.funil[s[0]]}"></i>`).join("");
+  el("leg").innerHTML=ST.map(s=>`<span><u style="background:${s[2]}"></u>${s[1]} ${m.funil[s[0]]}</span>`).join("");
+  el("tab").innerHTML="<tr><th>Cliente</th><th>Tipo</th><th>Vencimento</th><th>Valor</th><th>Situação</th><th></th></tr>"+
+   (L.map(x=>`<tr class="${x.id==aberto?"sel":""}"><td>${esc(x.cliente)}</td><td>${esc(x.tipo)}</td><td>${br(x.vencimento)}</td><td>${moeda(x.valor)}</td><td><select aria-label="Situação de ${esc(x.cliente)}" onchange="mudar(${x.id},this.value)">${ST.map(s=>`<option value="${s[0]}" ${s[0]==x.status?"selected":""}>${s[1]}</option>`).join("")}</select></td><td><button class="lk" onclick="abrir(${x.id})">Histórico</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum certificado vence neste mês.</td></tr>");
+  el("meses").innerHTML="<tr><th>Mês</th><th>Base</th><th>Renovados</th><th>Taxa</th></tr>"+m.por_mes.filter(x=>x.grupo).map(x=>{
+   const[yy,mn]=String(x.grupo).split("-");
+   return `<tr><td>${mesNome(Number(mn)-1)} de ${yy}</td><td>${x.total}</td><td>${x.renovados}</td><td><span class="bar" style="width:${Math.min(100,Number(x.taxa))*0.9}px"></span>${x.taxa}%</td></tr>`;
+  }).join("");
+  if(aberto)await hist(aberto);
+ }catch(e){toast("Falha ao carregar: "+e.message)}
+}
+async function hist(id){
+ try{
+  const e=await j("/api/historico?id="+id),x=LISTA.find(o=>o.id==id);
+  el("hst").innerHTML=(x?`<li><b>${esc(x.cliente)}</b> · ${esc(x.tipo)}</li>`:"")+
+   (e.length?e.map(v=>`<li><time>${esc(String(v.ts).replace("T"," "))}</time>${esc(v.tipo)}${v.canal?" · "+esc(v.canal):""}${v.resultado?" · "+esc(v.resultado):""}${v.detalhe?" · "+esc(v.detalhe):""}</li>`).join(""):"<li>Sem eventos.</li>");
+ }catch(e){toast("Falha no histórico: "+e.message)}
+}
+async function abrir(id){aberto=id;await render()}
+async function mudar(id,status){try{await post("/api/avancar",{id,status});toast("Status atualizado: "+NM[status]);await render()}catch(e){toast("Falha ao atualizar: "+e.message)}}
+async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: a régua não repete envios.");await render()}catch(e){toast("Falha na régua: "+e.message)}}
+async function cfgLoad(){
+ try{
+  const c=await j("/api/config");el("cu").value=c.url||"";el("cp").value=c.pipeline||"";el("ct").value="";
+  el("ct").placeholder=c.token_definido?"(salvo; deixe vazio para manter)":"token de longa duração";
+  el("ce").innerHTML=ST.map(s=>`<label>${s[1]}<input id="e_${s[0]}" inputmode="numeric" value="${esc((c.etapas||{})[s[0]]??"")}"></label>`).join("");
+  el("wh").textContent=location.origin+"/webhook/kommo";
+ }catch(e){toast("Falha ao carregar configurações: "+e.message)}
+}
+async function salvar(){
+ const etapas={};ST.forEach(s=>{const v=el("e_"+s[0]).value.trim();if(v)etapas[s[0]]=Number(v)});
+ const url=el("cu").value.trim();if(url&&!/^https?:\/\//i.test(url))return toast("A URL deve começar com https://");
+ try{await post("/api/config",{url,token:el("ct").value,pipeline:el("cp").value.trim(),etapas});el("ct").value="";toast("Configurações salvas.")}catch(e){toast("Falha ao salvar: "+e.message)}
+}
+async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
+async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
+async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await render()}catch(e){toast("Falha ao importar: "+e.message)}}
+async function carregarEu(){try{EU=await j("/api/eu");el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`+(EU.validade?` · certificado válido até ${br(EU.validade)}`:"")+(EU.fonte?` · via ${EU.fonte}`:"");const adm=EU.perfil==="admin";el("n2").hidden=!adm;el("n3").hidden=!adm;if(!adm&&!el("s2").hidden)aba(1)}catch(e){}}
+async function usuarios(){try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
+async function ativar(id,ativo){try{await post("/api/usuarios/ativo",{id,ativo});toast(ativo?"Usuário ativado.":"Usuário desativado.")}catch(e){toast("Falha: "+e.message);usuarios()}}
+async function remover(id){if(!confirm("Remover este usuário?"))return;try{await post("/api/usuarios/remover",{id});toast("Usuário removido.");usuarios()}catch(e){toast("Falha: "+e.message)}}
+async function cadastrarCert(){const f=el("uf").files[0];if(!f)return toast("Escolha o certificado.");const nome=el("un").value.trim();if(!nome)return toast("Informe o nome.");const q=new URLSearchParams({nome,email:el("ue").value.trim(),perfil:el("up").value,arquivo:f.name});const h={"X-Requested-With":"fetch"};try{const r=await j("/api/usuarios?"+q,{method:"POST",headers:h,body:f});toast("Certificado cadastrado. Válido até "+br(r.validade)+".");el("uf").value="";usuarios()}catch(e){toast("Falha: "+e.message)}}
+async function cadastrarEmail(){const nome=el("un").value.trim(),email=el("ue").value.trim();if(!nome)return toast("Informe o nome.");if(!email)return toast("Informe o e-mail.");const q=new URLSearchParams({nome,email,perfil:el("up").value});try{await j("/api/usuarios?"+q,{method:"POST",headers:{"X-Requested-With":"fetch"},body:new Blob([])});toast("Usuário cadastrado para o Access.");usuarios()}catch(e){toast("Falha: "+e.message)}}
+carregarEu();aba(1);render();
+</script></body></html>

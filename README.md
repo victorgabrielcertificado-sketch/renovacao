@@ -107,6 +107,37 @@ Com `AUTH_CERT=1` o app escuta só em `127.0.0.1` (o proxy é quem fica exposto)
 cadastro aceita `.cer`, `.crt`, `.pem`, `.pfx` e `.p12` (a senha do `.pfx` é usada só para extrair
 o certificado e não é armazenada).
 
+## Versão Cloudflare Pages (`*.pages.dev`)
+
+A pasta [`cloudflare/`](cloudflare/README.md) traz a mesma aplicação para rodar em
+**Cloudflare Pages + Functions + D1**, publicada em `https://renovacao.pages.dev`.
+
+```bash
+cd cloudflare
+npm install
+npm run db:local && npm run db:seed
+npm run dev          # http://127.0.0.1:8788
+npm test             # 8 testes unitários
+npm run test:api     # 16 verificações de integração
+```
+
+Deploy resumido (detalhes em [`cloudflare/README.md`](cloudflare/README.md)):
+
+```bash
+npx wrangler login
+npx wrangler d1 create renovacao          # copie o database_id para wrangler.toml
+npx wrangler d1 execute renovacao --remote --file=schema.sql
+npx wrangler pages project create renovacao --production-branch main
+npx wrangler pages secret put PAINEL_SENHA --project-name renovacao
+npx wrangler pages secret put WEBHOOK_TOKEN --project-name renovacao
+npx wrangler pages secret put CRON_TOKEN --project-name renovacao
+npx wrangler pages deploy public --project-name renovacao
+```
+
+Diferenças: banco **D1** em vez de SQLite, planilhas via **SheetJS**, e-mail via **Resend**
+(Workers não abrem SMTP), régua disparada por **cron externo** e login por **Cloudflare Access**
+ou certificado via cabeçalho `X-Client-Cert` (`.pfx`/`.p12` não são aceitos nessa versão).
+
 ## Modelo de dados (SQLite)
 
 - `renovacoes` — cliente, contato, tipo, vencimento, valor, status, lead da Kommo, último aviso.
@@ -122,7 +153,7 @@ Status: `a_vencer → email_enviado → whatsapp_enviado → agendado → emitid
 python testes.py -v
 ```
 
-26 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos), régua
+27 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos), régua
 (limiares, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook e login por certificado
 (certificado válido, vencido, inativo, operador × admin, cadastro PEM e DER).
 

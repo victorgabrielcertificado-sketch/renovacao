@@ -11,3 +11,7 @@ certificados_exemplo.xlsx
 .venv/
 venv/
 .env
+cloudflare/node_modules/
+cloudflare/.wrangler/
+cloudflare/.dev.vars
+cloudflare/.env

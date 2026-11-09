@@ -1,0 +1,15 @@
+# Copie para .dev.vars e ajuste. NÃO comite .dev.vars.
+PAINEL_USER=admin
+PAINEL_SENHA=troque-esta-senha
+WEBHOOK_TOKEN=troque-este-token
+CRON_TOKEN=troque-este-token
+
+# Login via Cloudflare Access (produção): mude para 1 depois de configurar o Access.
+TRUST_ACCESS=0
+
+# Login por certificado via proxy/mTLS (opcional).
+AUTH_CERT=0
+PROXY_SECRET=troque-este-segredo
+# CERT_HEADER=X-Client-Cert
+
+TZ=America/Sao_Paulo
