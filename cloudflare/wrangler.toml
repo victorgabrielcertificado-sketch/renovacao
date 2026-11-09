@@ -1,4 +1,5 @@
 name = "renovacao"
+pages_build_output_dir = "public"
 compatibility_date = "2026-11-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -7,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "renovacao"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "e6c93db6-0534-4034-9a96-d296bdf7e436"
 
 [vars]
 # Depois de configurar o Cloudflare Access, troque para "1".
