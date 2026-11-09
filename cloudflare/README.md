@@ -1,4 +1,4 @@
-# Versão Cloudflare Pages (`renovacao.pages.dev`)
+# Versão Cloudflare Pages (`renovacao-61n.pages.dev`)
 
 Esta pasta contém a versão do painel que roda em **Cloudflare Pages + Pages Functions + D1**,
 publicada em um domínio `*.pages.dev`. O `renovacao.py` (Python/SQLite) continua sendo a versão
@@ -58,7 +58,7 @@ npm run test:api      # 22 verificações de integração (servidor precisa esta
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
 
-## Publicar em `renovacao.pages.dev`
+## Publicar no Cloudflare Pages
 
 Pré-requisitos: conta Cloudflare e `npx wrangler login`.
 
@@ -123,11 +123,11 @@ npx wrangler pages secret put EMAIL_FROM --project-name renovacao
 npx wrangler pages deploy public --project-name renovacao
 ```
 
-A URL será `https://renovacao.pages.dev` (se esse subdomínio já estiver em uso, a Cloudflare
-atribui um sufixo, como `https://renovacao-61n.pages.dev`).
+A URL será `https://renovacao-61n.pages.dev` neste projeto (o nome `renovacao.pages.dev` já estava
+em uso; a Cloudflare atribui um sufixo quando isso acontece).
 
-> **Primeiro acesso:** sem `PAINEL_SENHA`/Access, o app responde **503** em `*.pages.dev` de
-> propósito. Defina `PAINEL_SENHA` (ou configure o Access) e faça o deploy novamente.
+> **Primeiro acesso:** sem `PAINEL_SENHA`, o app responde **503** em `*.pages.dev` de propósito.
+> Defina `PAINEL_SENHA` e faça o deploy novamente.
 
 ## Login pelo formulário (padrão)
 
@@ -138,8 +138,8 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).
 - Trocar a senha (ou o `SESSION_SECRET`) invalida todas as sessões abertas.
 - O Basic Auth continua aceito para scripts/CLI.
-- Não há limite de tentativas embutido; para produção, combine com Cloudflare Access ou
-  Rate Limiting do Cloudflare.
+- O login tem limite de **10 falhas por IP a cada 15 minutos** (tabela `login_tentativas`,
+  resposta `429` + `Retry-After`). No `*.pages.dev` não há rate limiting de borda.
 
 ## Segurança
 
@@ -156,7 +156,7 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 | **Cookies** | `HttpOnly`, `Secure` em HTTPS, `SameSite=Lax`, `Path=/`, 12 h; em HTTPS usa o prefixo `__Host-`. |
 | **Rate limiting** | Login: 10 falhas por IP a cada 15 min (tabela `login_tentativas`, resposta 429 + `Retry-After`). Para as demais rotas, use as regras de Rate Limiting/WAF da Cloudflare. |
 | **WAF / DDoS** | Camada de borda da Cloudflare. Regras de WAF, Rate Limiting e Access exigem um **domínio próprio** apontado para o projeto Pages (o `*.pages.dev` não pertence à sua zona). |
-| **OAuth 2.0 / OIDC** | **Cloudflare Access** (Google, GitHub, OTP por e-mail etc.) com `TRUST_ACCESS=1`; cadastre os e-mails na aba **Usuários**. |
+| **OAuth 2.0 / OIDC** | **Cloudflare Access** (Google, GitHub, OTP por e-mail etc.) exige domínio próprio. O app ainda **não valida o JWT do Access**; não ative `TRUST_ACCESS=1` sem essa validação. |
 | **Sessão/JWT** | JWT compacto HS256 com `sub`, `role`, `iat`, `exp` (12 h) e `csrf`, assinado com `SESSION_SECRET` + `PAINEL_SENHA`. |
 | **SQL injection** | Todas as consultas D1 usam prepared statements com bind de parâmetros. |
 | **XSS** | CSP + escape (`esc()`) de todo dado vindo do banco/planilha antes de ir para o HTML. |
@@ -176,12 +176,41 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
   ```
 - **Login por Basic Auth:** mantido para scripts/CLI; o uso normal é o formulário com cookie.
 
-## Login com Cloudflare Access (recomendado)
+## Caminho gratuito com `pages.dev`
+
+Sem domínio próprio, **WAF, Cloudflare Access e rate limiting de borda não ficam disponíveis**: o
+`*.pages.dev` não é uma zona da sua conta. A segurança fica toda no app, que já entrega TLS 1.2/1.3,
+HSTS, CSP, `X-Frame-Options`, `nosniff`, cookies `__Host-`, CSRF e limite de tentativas de login.
+
+Automatismos gratuitos incluídos no repositório:
+
+| Workflow | O que faz | Secrets necessários |
+|---|---|---|
+| `.github/workflows/regua.yml` | chama `POST /api/regua` a cada 6 h | `CRON_TOKEN` |
+| `.github/workflows/backup-d1.yml` | exporta o D1 todo dia às 03:00 UTC | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+
+Cadastre em **GitHub → Settings → Secrets and variables → Actions → New repository secret**.
+Para o backup, crie um API Token na Cloudflare em **My Profile → API Tokens → Create Token** com
+**Account → D1 → Edit**.
+
+**E-mail real:** sem domínio verificado, o Resend só permite testes com `onboarding@resend.dev`
+para o e-mail da própria conta. Para enviar aos clientes, verifique um domínio no Resend (pode ser
+um domínio só para e-mail) e copie os registros DNS para o provedor de DNS desse domínio.
+Sem `RESEND_API_KEY`, o app continua em modo simulação.
+
+**Mantenha** `TRUST_ACCESS=0` e `AUTH_CERT=0` nesse caminho.
+
+## Login com Cloudflare Access (requer domínio próprio)
+
+> **Não disponível em `*.pages.dev`:** o Access precisa de um hostname dentro de uma zona sua.
+> Além disso, o app hoje confia no header `Cf-Access-Authenticated-User-Email` **sem validar o
+> JWT do Access**. Mantenha `TRUST_ACCESS=0` até implementar a validação de
+> `Cf-Access-Jwt-Assertion` com `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD`.
 
 1. Zero Trust → **Access → Applications → Add an application → Self-hosted**.
-2. Domínio: `renovacao.pages.dev` (e `*.renovacao.pages.dev` para previews).
+2. Domínio: `painel.seudominio.com` (e `*.painel.seudominio.com` para previews).
 3. Política: **Allow** para os e-mails/domínios da equipe (OTP por e-mail, Google, GitHub etc.).
-4. Defina `TRUST_ACCESS=1` nas variáveis e faça o deploy.
+4. Depois de implementar a validação do JWT, defina `TRUST_ACCESS=1` e faça o deploy.
 5. No painel, aba **Usuários**, cadastre **nome + e-mail** (sem certificado) para cada pessoa.
    O Access envia `Cf-Access-Authenticated-User-Email`; o app procura esse e-mail na tabela
    `usuarios` e usa o perfil (`admin`/`operador`).
@@ -223,7 +252,7 @@ Pages Functions não têm Cron Trigger. Crie um Worker com cron ou use GitHub Ac
 chamando:
 
 ```
-POST https://renovacao.pages.dev/api/regua?t=SEU_CRON_TOKEN
+POST https://renovacao-61n.pages.dev/api/regua?t=SEU_CRON_TOKEN
 Header: X-Requested-With: fetch
 ```
 
@@ -232,7 +261,7 @@ Exemplo de Worker com cron:
 ```js
 export default {
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(fetch(`https://renovacao.pages.dev/api/regua?t=${env.CRON_TOKEN}`, {
+    ctx.waitUntil(fetch(`https://renovacao-61n.pages.dev/api/regua?t=${env.CRON_TOKEN}`, {
       method: "POST",
       headers: { "X-Requested-With": "fetch" },
     }));
@@ -254,7 +283,7 @@ EMAIL_FROM=renovacao@seudominio.com.br
 Sem `RESEND_API_KEY`, o envio é **simulado** (o evento é gravado como enviado, mas nada sai).
 Valide o domínio no Resend para o remetente funcionar.
 
-## Segurança
+## Notas de segurança operacional
 
 - Em `*.pages.dev`, sem autenticação configurada o app responde **503** (a menos que
   `ALLOW_PUBLIC=1`).
@@ -262,21 +291,23 @@ Valide o domínio no Resend para o remetente funcionar.
   `/webhook/*` autenticam por conta própria.
 - POSTs do painel exigem `X-Requested-With: fetch` (mitiga CSRF).
 - O token da Kommo salvo pelo painel fica em texto puro no D1; prefira variável de ambiente.
-- `TRUST_ACCESS=1` só deve ser usado **com o Access na frente** do domínio.
+- `TRUST_ACCESS=1` só deve ser usado **com o Access na frente** do domínio **e** com a validação
+  do JWT do Access implementada; hoje o app não valida esse JWT.
 - `AUTH_CERT=1` só deve ser usado com um proxy/mTLS confiável e `PROXY_SECRET`.
 
 ## Limites do plano gratuito
 
-- D1: 5 GB e 5 milhões de leituras/dia (suficiente para o protótipo).
-- Pages: 500 builds/mês e 100 GB de banda.
-- Resend: 3.000 e-mails/mês (plano gratuito).
+- D1: 5 GB, 5 milhões de leituras/dia e 100 mil escritas/dia.
+- Pages: 500 builds/mês, 20 mil arquivos e banda/requisições estáticas ilimitadas.
+- Pages Functions: 100 mil requisições/dia.
+- Resend: 3.000 e-mails/mês (100/dia).
 - Workers: CPU por requisição; a importação de planilhas grandes pode encostar no limite.
 
 ## Solução de problemas
 
 | Sintoma | Causa provável |
 |---|---|
-| `503 Painel sem autenticação` | defina `PAINEL_SENHA` ou configure o Access |
+| `503 Painel sem autenticação` | defina `PAINEL_SENHA` (no `pages.dev` não há Access) |
 | `401` no navegador | sessão expirada; abra `/login` novamente |
 | `403 e-mail do Access não cadastrado` | cadastre o e-mail na aba Usuários ou ajuste a política |
 | `403 certificado inválido` | cabeçalho errado, `PROXY_SECRET` diferente ou certificado não cadastrado |
