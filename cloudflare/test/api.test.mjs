@@ -77,6 +77,44 @@ async function main() {
     assert.equal(r.json.perfil, "admin");
   });
 
+  await passo("navegação sem login redireciona para /login", async () => {
+    const r = await req("/", { headers: { Accept: "text/html" } });
+    assert.equal(r.status, 302);
+    assert.match(r.headers.get("location") || "", /\/login\?next=%2F/);
+    const login = await req("/login");
+    assert.equal(login.status, 200);
+    assert.match(login.text, /Entrar/);
+  });
+
+  await passo("login por formulário cria sessão", async () => {
+    const errado = await req("/api/login", {
+      method: "POST",
+      headers: { ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ usuario: "admin", senha: "errada" }),
+    });
+    assert.equal(errado.status, 401);
+
+    const ok = await req("/api/login", {
+      method: "POST",
+      headers: { ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ usuario: "admin", senha: "teste" }),
+    });
+    assert.equal(ok.status, 200);
+    const cookie = (ok.headers.get("set-cookie") || "").split(";")[0];
+    assert.match(cookie, /^renovacao_sessao=/);
+
+    const eu = await req("/api/eu", { headers: { Cookie: cookie } });
+    assert.equal(eu.status, 200);
+    assert.equal(eu.json.fonte, "sessao");
+
+    const painel = await req("/", { headers: { Cookie: cookie } });
+    assert.equal(painel.status, 200);
+
+    const out = await req("/api/logout", { method: "POST", headers: { ...H, Cookie: cookie } });
+    assert.equal(out.status, 200);
+    assert.match(out.headers.get("set-cookie") || "", /Max-Age=0/);
+  });
+
   await passo("/api/eu com Cloudflare Access", async () => {
     const r = await req("/api/eu", { headers: ACCESS_OP });
     assert.equal(r.status, 200);

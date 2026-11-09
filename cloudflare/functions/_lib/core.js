@@ -374,8 +374,78 @@ async function certInfoFromHeader(raw) {
   return certInfo("", dado);
 }
 
+const SESSION_COOKIE = "renovacao_sessao";
+const SESSION_TTL = 12 * 3600; // 12 horas
+
+function b64url(bytes) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlDecode(texto) {
+  let s = String(texto).replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+}
+
+function getCookie(request, nome) {
+  const raw = request.headers.get("Cookie") || "";
+  for (const parte of raw.split(";")) {
+    const i = parte.indexOf("=");
+    if (i < 0) continue;
+    if (parte.slice(0, i).trim() !== nome) continue;
+    try {
+      return decodeURIComponent(parte.slice(i + 1).trim());
+    } catch {
+      return parte.slice(i + 1).trim();
+    }
+  }
+  return null;
+}
+
+async function chaveSessao(env) {
+  const segredo = env.SESSION_SECRET || env.PAINEL_SENHA || "dev";
+  return await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(segredo),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
+}
+
+export async function criarSessao(env, user) {
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL;
+  const payload = b64url(new TextEncoder().encode(JSON.stringify({ u: user.nome, p: user.perfil, exp })));
+  const chave = await chaveSessao(env);
+  const assinatura = await crypto.subtle.sign("HMAC", chave, new TextEncoder().encode(payload));
+  return payload + "." + b64url(new Uint8Array(assinatura));
+}
+
+export async function lerSessao(env, token) {
+  if (!token || !token.includes(".")) return null;
+  const [payload, assinatura] = token.split(".");
+  try {
+    const chave = await chaveSessao(env);
+    const ok = await crypto.subtle.verify(
+      "HMAC",
+      chave,
+      b64urlDecode(assinatura),
+      new TextEncoder().encode(payload),
+    );
+    if (!ok) return null;
+    const dados = JSON.parse(new TextDecoder().decode(b64urlDecode(payload)));
+    if (!dados || !dados.exp || dados.exp < Math.floor(Date.now() / 1000)) return null;
+    return { nome: dados.u || "Administrador", perfil: dados.p === "admin" ? "admin" : "operador", validade: null, fonte: "sessao" };
+  } catch {
+    return null;
+  }
+}
+
 export async function authenticate(env, request, url) {
   if (url.pathname.startsWith("/webhook/")) return { ok: true, user: null };
+  if (url.pathname === "/api/login" || url.pathname === "/api/logout") return { ok: true, user: null };
 
   // chamada automática da régua (cron externo) com token dedicado
   if (
@@ -406,6 +476,12 @@ export async function authenticate(env, request, url) {
       };
     }
     return { ok: true, user: { nome: "local", perfil: "admin", validade: null } };
+  }
+
+  // sessão criada pelo formulário de login (cookie HMAC)
+  if (senha) {
+    const sess = await lerSessao(env, getCookie(request, SESSION_COOKIE));
+    if (sess) return { ok: true, user: sess };
   }
 
   const auth = request.headers.get("Authorization") || "";
@@ -646,6 +722,33 @@ async function rotaPost(env, K, url, request, user, admin) {
 
   // CSRF: navegador não consegue mandar este header cross-site sem preflight
   if (request.headers.get("X-Requested-With") !== "fetch") throw new HttpError(403, "requisição inválida");
+
+  if (p === "/api/login") {
+    if (!env.PAINEL_SENHA) throw new HttpError(400, "login por senha desativado");
+    let d;
+    try {
+      d = JSON.parse(new TextDecoder().decode(body) || "{}");
+    } catch {
+      throw new HttpError(400, "JSON inválido");
+    }
+    const usuario = String(d?.usuario || "admin").trim();
+    const informada = String(d?.senha || "");
+    if (!safeEqual(usuario, env.PAINEL_USER || "admin") || !safeEqual(informada, env.PAINEL_SENHA)) {
+      throw new HttpError(401, "usuário ou senha inválidos");
+    }
+    const token = await criarSessao(env, { nome: "Administrador", perfil: "admin" });
+    const secure = url.protocol === "https:" ? "; Secure" : "";
+    return json({ ok: true }, 200, {
+      "Set-Cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}${secure}`,
+    });
+  }
+
+  if (p === "/api/logout") {
+    const secure = url.protocol === "https:" ? "; Secure" : "";
+    return json({ ok: true }, 200, {
+      "Set-Cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
+    });
+  }
 
   if (p === "/api/importar") return await importar(env, url, body);
 

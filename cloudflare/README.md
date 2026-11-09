@@ -12,7 +12,7 @@ para rodar em servidor/VPS; esta é a versão serverless.
 | `pandas` + `openpyxl` | **SheetJS** (`xlsx`) |
 | SMTP | **Resend** (HTTP; Workers não abrem SMTP) |
 | Thread da régua a cada 6h | **cron externo** chamando `/api/regua` |
-| Login básico + certificado via nginx | Basic + **Cloudflare Access** + certificado via cabeçalho |
+| Login básico + certificado via nginx | formulário com cookie + Basic + **Cloudflare Access** + certificado via cabeçalho |
 | Upload de `.pfx`/`.p12` | somente `.cer`/`.crt`/`.pem`/`.der` |
 
 Tudo o mais é igual: régua D60/D30/D15/D7/D1/D-3, métricas, histórico, importação de planilha,
@@ -23,7 +23,7 @@ Kommo (leads, etapas e notas) e perfis `admin`/`operador`.
 ```
 cloudflare/
   functions/
-    _middleware.js          protege o painel estático (Basic/Access/certificado)
+    _middleware.js          protege o painel (formulário/Basic/Access/certificado); /login é público
     _lib/core.js            regras: régua, métricas, Kommo, auth, rotas
     _lib/import.js          leitura de .xlsx/.xls/.csv
     _lib/certs.js           leitura de certificado (PEM/DER)
@@ -31,6 +31,7 @@ cloudflare/
     webhook/kommo.js        /webhook/kommo
   public/
     index.html              painel (HTML/CSS/JS)
+    login.html              formulário de login (cookie de sessão)
     _headers                CSP e cabeçalhos de segurança
   schema.sql                tabelas do D1
   test/                     testes unitários e de integração
@@ -52,7 +53,7 @@ Em outro terminal:
 
 ```bash
 npm test              # 8 testes unitários (planilha, datas, certificado, auth)
-npm run test:api      # 16 verificações de integração (servidor precisa estar rodando)
+npm run test:api      # 18 verificações de integração (servidor precisa estar rodando)
 ```
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
@@ -100,8 +101,9 @@ npx wrangler pages secret put EMAIL_FROM --project-name renovacao
 
 | Variável | Para que serve |
 |---|---|
-| `PAINEL_SENHA` | senha básica de emergência (admin). **Defina antes do primeiro deploy.** |
-| `PAINEL_USER` | usuário do Basic Auth (padrão `admin`) |
+| `PAINEL_SENHA` | senha do formulário de login e do Basic Auth de emergência (admin). **Defina antes do primeiro deploy.** |
+| `PAINEL_USER` | usuário do formulário/Basic Auth (padrão `admin`) |
+| `SESSION_SECRET` | chave HMAC do cookie de sessão (opcional; padrão: `PAINEL_SENHA`) |
 | `WEBHOOK_TOKEN` | token exigido em `/webhook/kommo?t=...` |
 | `CRON_TOKEN` | token para `POST /api/regua?t=...` (régua automática) |
 | `RESEND_API_KEY` | envio real de e-mail via Resend |
@@ -121,10 +123,23 @@ npx wrangler pages secret put EMAIL_FROM --project-name renovacao
 npx wrangler pages deploy public --project-name renovacao
 ```
 
-A URL será `https://renovacao.pages.dev`.
+A URL será `https://renovacao.pages.dev` (se esse subdomínio já estiver em uso, a Cloudflare
+atribui um sufixo, como `https://renovacao-61n.pages.dev`).
 
 > **Primeiro acesso:** sem `PAINEL_SENHA`/Access, o app responde **503** em `*.pages.dev` de
 > propósito. Defina `PAINEL_SENHA` (ou configure o Access) e faça o deploy novamente.
+
+## Login pelo formulário (padrão)
+
+Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redirecionada para
+`/login`. O formulário troca usuário/senha por um **cookie de sessão HMAC** (`HttpOnly`,
+`SameSite=Lax`, 12 horas), e o botão **Sair** remove o cookie.
+
+- O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).
+- Trocar a senha (ou o `SESSION_SECRET`) invalida todas as sessões abertas.
+- O Basic Auth continua aceito para scripts/CLI.
+- Não há limite de tentativas embutido; para produção, combine com Cloudflare Access ou
+  Rate Limiting do Cloudflare.
 
 ## Login com Cloudflare Access (recomendado)
 
@@ -227,7 +242,7 @@ Valide o domínio no Resend para o remetente funcionar.
 | Sintoma | Causa provável |
 |---|---|
 | `503 Painel sem autenticação` | defina `PAINEL_SENHA` ou configure o Access |
-| `401` no navegador | Basic Auth não enviado; faça login ou use Access |
+| `401` no navegador | sessão expirada; abra `/login` novamente |
 | `403 e-mail do Access não cadastrado` | cadastre o e-mail na aba Usuários ou ajuste a política |
 | `403 certificado inválido` | cabeçalho errado, `PROXY_SECRET` diferente ou certificado não cadastrado |
 | `binding D1 (DB) não configurado` | binding `DB` ausente no projeto Pages |

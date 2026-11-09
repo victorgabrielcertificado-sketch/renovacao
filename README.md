@@ -118,7 +118,7 @@ npm install
 npm run db:local && npm run db:seed
 npm run dev          # http://127.0.0.1:8788
 npm test             # 8 testes unitários
-npm run test:api     # 16 verificações de integração
+npm run test:api     # 18 verificações de integração
 ```
 
 Deploy resumido (detalhes em [`cloudflare/README.md`](cloudflare/README.md)):
@@ -135,8 +135,8 @@ npx wrangler pages deploy public --project-name renovacao
 ```
 
 Diferenças: banco **D1** em vez de SQLite, planilhas via **SheetJS**, e-mail via **Resend**
-(Workers não abrem SMTP), régua disparada por **cron externo** e login por **Cloudflare Access**
-ou certificado via cabeçalho `X-Client-Cert` (`.pfx`/`.p12` não são aceitos nessa versão).
+(Workers não abrem SMTP), régua disparada por **cron externo** e login por **formulário com cookie**,
+**Cloudflare Access** ou certificado via cabeçalho `X-Client-Cert` (`.pfx`/`.p12` não são aceitos nessa versão).
 
 ## Modelo de dados (SQLite)
 
