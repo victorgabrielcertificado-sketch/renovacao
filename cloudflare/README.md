@@ -182,12 +182,15 @@ Sem domínio próprio, **WAF, Cloudflare Access e rate limiting de borda não fi
 `*.pages.dev` não é uma zona da sua conta. A segurança fica toda no app, que já entrega TLS 1.2/1.3,
 HSTS, CSP, `X-Frame-Options`, `nosniff`, cookies `__Host-`, CSRF e limite de tentativas de login.
 
-Automatismos gratuitos incluídos no repositório:
+Automatismos gratuitos preparados em `.github/workflows/`:
 
 | Workflow | O que faz | Secrets necessários |
 |---|---|---|
 | `.github/workflows/regua.yml` | chama `POST /api/regua` a cada 6 h | `CRON_TOKEN` |
 | `.github/workflows/backup-d1.yml` | exporta o D1 todo dia às 03:00 UTC | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+
+> Se o push for feito por um token OAuth sem o escopo `workflow`, o GitHub recusa o envio
+> desses arquivos. Nesse caso, adicione-os pelo site do GitHub ou use um PAT com `repo` + `workflow`.
 
 Cadastre em **GitHub → Settings → Secrets and variables → Actions → New repository secret**.
 Para o backup, crie um API Token na Cloudflare em **My Profile → API Tokens → Create Token** com
