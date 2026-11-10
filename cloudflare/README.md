@@ -286,6 +286,34 @@ EMAIL_FROM=renovacao@seudominio.com.br
 Sem `RESEND_API_KEY`, o envio é **simulado** (o evento é gravado como enviado, mas nada sai).
 Valide o domínio no Resend para o remetente funcionar.
 
+## Webhook da Kommo
+
+O endpoint do painel é:
+
+```
+https://renovacao-61n.pages.dev/webhook/kommo?t=SEU_WEBHOOK_TOKEN
+```
+
+Ele já está no ar: responde `403` sem token e `200 {"ok":true}` com o token correto.
+
+Para registrar/atualizar automaticamente o webhook na Kommo (evento `status_lead`):
+
+```powershell
+cd cloudflare
+$env:KOMMO_URL="https://suaconta.kommo.com"
+$env:KOMMO_TOKEN="token-de-longa-duracao"
+$env:WEBHOOK_TOKEN="SEU_WEBHOOK_TOKEN"
+node scripts/kommo-webhook.mjs
+```
+
+O token da Kommo precisa ser de um usuário administrador. O script mascara o token na saída.
+
+Também é possível cadastrar manualmente em **Kommo → Configurações → Integrações → Webhooks**,
+com a URL acima e o evento de **mudança de etapa do lead** (`status_lead`).
+
+Sem `KOMMO_URL`/`KOMMO_TOKEN` (ou configuração salva no painel), a integração fica em
+**modo simulação**.
+
 ## Notas de segurança operacional
 
 - Em `*.pages.dev`, sem autenticação configurada o app responde **503** (a menos que
@@ -305,6 +333,26 @@ Valide o domínio no Resend para o remetente funcionar.
 - Pages Functions: 100 mil requisições/dia.
 - Resend: 3.000 e-mails/mês (100/dia).
 - Workers: CPU por requisição; a importação de planilhas grandes pode encostar no limite.
+
+## Monitoramento do D1
+
+Comando rápido:
+
+```bash
+npx wrangler d1 info renovacao
+```
+
+Ele mostra tamanho, tabelas e leituras/escritas das últimas 24 h. Na revisão de 10/11/2026:
+**73,7 kB**, 5 tabelas, 0 linhas, 2 consultas de leitura e 0 escritas em 24 h — uso praticamente zero.
+
+Cada importação grava uma linha por renovação; cada evento da régua grava uma linha em `eventos`;
+cada falha de login atualiza `login_tentativas`. As tentativas expiradas são removidas
+automaticamente. `eventos` não tem limpeza automática; se crescer muito, agende a exclusão de
+registros antigos.
+
+Acompanhe também **Workers & Pages → renovacao → Metrics** (Functions: 100 mil requisições/dia) e
+**D1 → renovacao → Metrics**. Desde setembro/2026 a D1 aplica os limites diários do Free: ao
+estourar, as consultas falham até o reset.
 
 ## Solução de problemas
 

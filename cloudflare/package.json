@@ -10,6 +10,7 @@
     "db:local": "wrangler d1 execute renovacao --local --file=schema.sql",
     "db:seed": "wrangler d1 execute renovacao --local --file=test/seed.sql",
     "db:remote": "wrangler d1 execute renovacao --remote --file=schema.sql",
+    "kommo:webhook": "node scripts/kommo-webhook.mjs",
     "test": "node --test test/unit.test.mjs",
     "test:api": "node test/api.test.mjs"
   },
