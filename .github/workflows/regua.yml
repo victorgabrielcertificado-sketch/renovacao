@@ -1,0 +1,19 @@
+name: Regua de avisos
+
+on:
+  schedule:
+    # a cada 6 horas (UTC)
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  regua:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar a regua no Cloudflare Pages
+        env:
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          curl -fsS -X POST \
+            "https://renovacao-61n.pages.dev/api/regua?t=${CRON_TOKEN}" \
+            -H "X-Requested-With: fetch"
