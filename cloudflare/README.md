@@ -139,8 +139,6 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).
 - Trocar a senha (ou o `SESSION_SECRET`) invalida todas as sessões abertas.
 - O Basic Auth continua aceito para scripts/CLI.
-- O botão **Entrar com certificado digital** fica abaixo do formulário e só funciona com o proxy
-  mTLS configurado (ver [Login por certificado digital](#login-por-certificado-digital)).
 - O login tem limite de **10 falhas por IP a cada 15 minutos** (tabela `login_tentativas`,
   resposta `429` + `Retry-After`). No `*.pages.dev` não há rate limiting de borda.
 
@@ -224,24 +222,24 @@ Sem `RESEND_API_KEY`, o app continua em modo simulação.
 
 `PAINEL_SENHA` pode continuar definida como acesso de emergência do administrador.
 
-## Login por certificado digital
+## Login por certificado digital (opcional, sem botão)
 
-O botão **Entrar com certificado digital** na tela de login não lê o repositório de certificados
-por JavaScript — os navegadores bloqueiam esse acesso por segurança. O botão redireciona para um
-endpoint **mTLS**; é o handshake TLS que faz o navegador abrir o seletor de certificados do
-sistema (Windows: repositório **Pessoal** do usuário; macOS: **Keychain**). Chrome/Edge usam o
-repositório do Windows e Safari/Chrome no macOS usam o Keychain; o Firefox pode usar o próprio
-repositório.
+O login por certificado continua disponível no backend, mas **não há botão na tela de login**.
+Para usar, o proxy mTLS deve levar o usuário diretamente a `CERT_LOGIN_URL` (ou `/cert-login`).
+
+O navegador não expõe o repositório de certificados para JavaScript — os navegadores bloqueiam
+esse acesso por segurança. Quem abre o seletor é o handshake TLS: o proxy solicita o certificado
+e o navegador mostra os certificados do sistema (Windows: repositório **Pessoal**; macOS:
+**Keychain**). Chrome/Edge usam o repositório do Windows e Safari/Chrome no macOS usam o
+Keychain; o Firefox pode usar o próprio repositório.
 
 Fluxo:
 
-1. O botão consulta `GET /api/auth-config`.
-2. Se `AUTH_CERT=1`, abre `CERT_LOGIN_URL` (ou `/cert-login` no mesmo domínio).
-3. O proxy mTLS exige o certificado e repassa o PEM em `X-Client-Cert` + `X-Proxy-Secret`.
-4. `GET /cert-login` valida a impressão digital SHA-256 na tabela `usuarios`, cria o cookie de
+1. O proxy mTLS exige o certificado e repassa o PEM em `X-Client-Cert` + `X-Proxy-Secret`.
+2. `GET /cert-login` valida a impressão digital SHA-256 na tabela `usuarios`, cria o cookie de
    sessão e redireciona para o painel.
 
-Sem proxy mTLS o botão mostra que o recurso não está configurado. **No `*.pages.dev` não há
+Sem proxy mTLS, `/cert-login` não tem como receber o certificado. **No `*.pages.dev` não há
 mTLS de cliente**, então é necessário um domínio próprio com um proxy na frente (nginx,
 Cloudflare Tunnel + nginx, Caddy etc.).
 
@@ -309,8 +307,8 @@ Observações:
   proxy o app), porque o cookie de sessão é emitido para esse domínio.
 - O `ssl_verify_client optional` é por `server`: o navegador pode pedir o certificado já na
   primeira visita. O usuário pode cancelar e usar o formulário de senha.
-- O botão fica visível em `pages.dev`, mas informa que o recurso não está configurado; não há
-  como habilitar mTLS de cliente apenas no `*.pages.dev`.
+- Não há como habilitar mTLS de cliente apenas no `*.pages.dev`; sem o proxy, o endpoint
+  `/cert-login` não é utilizável.
 
 ## Régua automática (cron)
 
