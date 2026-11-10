@@ -310,6 +310,26 @@ async function main() {
     assert.equal(eu.json.fonte, "certificado");
     assert.equal(eu.json.perfil, "admin");
 
+    const cfg = await req("/api/auth-config");
+    assert.equal(cfg.status, 200);
+    assert.equal(cfg.json.cert, true);
+
+    const login = await req("/cert-login?next=/", { headers });
+    assert.equal(login.status, 302);
+    const cookie = login.headers.get("set-cookie") || "";
+    assert.match(cookie, /renovacao_sessao=/);
+    const sess = await req("/api/eu", { headers: { Cookie: cookie.split(";")[0] } });
+    assert.equal(sess.status, 200);
+    assert.equal(sess.json.fonte, "sessao");
+
+    const semCert = await req("/cert-login");
+    assert.equal(semCert.status, 302);
+    assert.match(semCert.headers.get("location") || "", /erro=cert/);
+
+    const aberto = await req("/cert-login?next=//evil.example", { headers });
+    assert.equal(aberto.status, 302);
+    assert.ok(!(aberto.headers.get("location") || "").includes("evil.example"));
+
     const errado = await req("/api/eu", { headers: { ...headers, "X-Proxy-Secret": "x" } });
     assert.equal(errado.status, 401);
 

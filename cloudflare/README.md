@@ -113,6 +113,7 @@ npx wrangler pages secret put EMAIL_FROM --project-name renovacao
 | `AUTH_CERT` | `1` para aceitar certificado no cabeçalho |
 | `CERT_HEADER` | nome do cabeçalho do certificado (padrão `X-Client-Cert`) |
 | `PROXY_SECRET` | segredo que o proxy/mTLS envia em `X-Proxy-Secret` |
+| `CERT_LOGIN_URL` | URL do endpoint mTLS que abre o seletor de certificados (se vazio, usa `/cert-login` no mesmo domínio) |
 | `TZ` | fuso da régua (padrão `America/Sao_Paulo`) |
 | `ALLOW_PUBLIC` | `1` para permitir painel sem login (só demonstração) |
 | `KOMMO_URL`, `KOMMO_TOKEN`, `KOMMO_PIPELINE`, `KOMMO_ETAPAS` | integração Kommo (também configurável pelo painel) |
@@ -138,6 +139,8 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).
 - Trocar a senha (ou o `SESSION_SECRET`) invalida todas as sessões abertas.
 - O Basic Auth continua aceito para scripts/CLI.
+- O botão **Entrar com certificado digital** fica abaixo do formulário e só funciona com o proxy
+  mTLS configurado (ver [Login por certificado digital](#login-por-certificado-digital)).
 - O login tem limite de **10 falhas por IP a cada 15 minutos** (tabela `login_tentativas`,
   resposta `429` + `Retry-After`). No `*.pages.dev` não há rate limiting de borda.
 
@@ -157,6 +160,7 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 | **Rate limiting** | Login: 10 falhas por IP a cada 15 min (tabela `login_tentativas`, resposta 429 + `Retry-After`). Para as demais rotas, use as regras de Rate Limiting/WAF da Cloudflare. |
 | **WAF / DDoS** | Camada de borda da Cloudflare. Regras de WAF, Rate Limiting e Access exigem um **domínio próprio** apontado para o projeto Pages (o `*.pages.dev` não pertence à sua zona). |
 | **OAuth 2.0 / OIDC** | **Cloudflare Access** (Google, GitHub, OTP por e-mail etc.) exige domínio próprio. O app ainda **não valida o JWT do Access**; não ative `TRUST_ACCESS=1` sem essa validação. |
+| **Certificado digital** | mTLS terminado no proxy; o app valida fingerprint SHA-256, usuário ativo e validade. `/cert-login` cria a sessão após o handshake. |
 | **Sessão/JWT** | JWT compacto HS256 com `sub`, `role`, `iat`, `exp` (12 h) e `csrf`, assinado com `SESSION_SECRET` + `PAINEL_SENHA`. |
 | **SQL injection** | Todas as consultas D1 usam prepared statements com bind de parâmetros. |
 | **XSS** | CSP + escape (`esc()`) de todo dado vindo do banco/planilha antes de ir para o HTML. |
@@ -222,20 +226,65 @@ Sem `RESEND_API_KEY`, o app continua em modo simulação.
 
 ## Login por certificado digital
 
-Workers não recebem o certificado TLS diretamente. O certificado precisa ser terminado por um
-proxy/mTLS que repasse o PEM:
+O botão **Entrar com certificado digital** na tela de login não lê o repositório de certificados
+por JavaScript — os navegadores bloqueiam esse acesso por segurança. O botão redireciona para um
+endpoint **mTLS**; é o handshake TLS que faz o navegador abrir o seletor de certificados do
+sistema (Windows: repositório **Pessoal** do usuário; macOS: **Keychain**). Chrome/Edge usam o
+repositório do Windows e Safari/Chrome no macOS usam o Keychain; o Firefox pode usar o próprio
+repositório.
+
+Fluxo:
+
+1. O botão consulta `GET /api/auth-config`.
+2. Se `AUTH_CERT=1`, abre `CERT_LOGIN_URL` (ou `/cert-login` no mesmo domínio).
+3. O proxy mTLS exige o certificado e repassa o PEM em `X-Client-Cert` + `X-Proxy-Secret`.
+4. `GET /cert-login` valida a impressão digital SHA-256 na tabela `usuarios`, cria o cookie de
+   sessão e redireciona para o painel.
+
+Sem proxy mTLS o botão mostra que o recurso não está configurado. **No `*.pages.dev` não há
+mTLS de cliente**, então é necessário um domínio próprio com um proxy na frente (nginx,
+Cloudflare Tunnel + nginx, Caddy etc.).
+
+Exemplo de nginx:
 
 ```nginx
-# exemplo: nginx na frente do app (ou um Worker/proxy equivalente)
-proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
-proxy_set_header X-Proxy-Secret "troque-este-segredo";
+server {
+  listen 443 ssl;
+  server_name painel.seudominio.com;
+
+  ssl_certificate     /etc/letsencrypt/live/painel.seudominio.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/painel.seudominio.com/privkey.pem;
+
+  # CA(s) que emitiram os certificados dos usuários (cadeia ICP-Brasil ou CA interna).
+  ssl_client_certificate /etc/nginx/ca-clientes.pem;
+  ssl_verify_client optional;
+
+  # Só esta rota exige o certificado; o resto do site continua acessível para o formulário.
+  location = /cert-login {
+    if ($ssl_client_verify != SUCCESS) { return 403; }
+    proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
+    proxy_set_header X-Proxy-Secret "troque-este-segredo";
+    proxy_set_header Host renovacao-61n.pages.dev;
+    proxy_ssl_server_name on;
+    proxy_ssl_name renovacao-61n.pages.dev;
+    proxy_pass https://renovacao-61n.pages.dev;
+  }
+
+  location / {
+    proxy_set_header Host renovacao-61n.pages.dev;
+    proxy_ssl_server_name on;
+    proxy_ssl_name renovacao-61n.pages.dev;
+    proxy_pass https://renovacao-61n.pages.dev;
+  }
+}
 ```
 
-No app:
+No app (produção):
 
 ```
 AUTH_CERT=1
 PROXY_SECRET=troque-este-segredo
+CERT_LOGIN_URL=https://painel.seudominio.com/cert-login
 # CERT_HEADER=X-Client-Cert   (padrão)
 ```
 
@@ -243,11 +292,25 @@ O app calcula a impressão digital SHA-256, confere se o usuário está ativo e 
 está dentro da validade. O cabeçalho só é aceito se `X-Proxy-Secret` conferir com `PROXY_SECRET`.
 **Nunca** exponha o app de forma que o cliente consiga mandar esse cabeçalho direto.
 
-`.pfx`/`.p12` não são suportados nesta versão (o parser PKCS#12 não roda no Workers). Converta:
+Cadastre o certificado em **Usuários → Certificado** (PEM/DER). `.pfx`/`.p12` não são suportados
+nesta versão (o parser PKCS#12 não roda no Workers). Converta:
 
 ```bash
 openssl pkcs12 -in certificado.pfx -clcerts -nokeys -out certificado.pem
 ```
+
+Observações:
+
+- O certificado do usuário precisa estar na cadeia configurada em `ssl_client_certificate`; para
+  ICP-Brasil, inclua a cadeia completa da AC.
+- Revogação (CRL/OCSP) pode ser configurada no nginx (`ssl_crl`) ou no proxy; o app valida
+  fingerprint, atividade e validade.
+- `CERT_LOGIN_URL` deve apontar para o mesmo domínio do painel (ou para um domínio que também
+  proxy o app), porque o cookie de sessão é emitido para esse domínio.
+- O `ssl_verify_client optional` é por `server`: o navegador pode pedir o certificado já na
+  primeira visita. O usuário pode cancelar e usar o formulário de senha.
+- O botão fica visível em `pages.dev`, mas informa que o recurso não está configurado; não há
+  como habilitar mTLS de cliente apenas no `*.pages.dev`.
 
 ## Régua automática (cron)
 

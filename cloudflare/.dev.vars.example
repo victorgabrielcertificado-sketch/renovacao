@@ -13,5 +13,8 @@ TRUST_ACCESS=0
 AUTH_CERT=0
 PROXY_SECRET=troque-este-segredo
 # CERT_HEADER=X-Client-Cert
+# URL do endpoint mTLS que abre o seletor de certificados do sistema.
+# Se vazio, o botão usa /cert-login no mesmo domínio.
+# CERT_LOGIN_URL=https://painel.seudominio.com/cert-login
 
 TZ=America/Sao_Paulo

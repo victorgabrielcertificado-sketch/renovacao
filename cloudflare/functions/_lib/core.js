@@ -549,9 +549,36 @@ async function limparFalhas(env, chave) {
   await run(env, "DELETE FROM login_tentativas WHERE chave=?", chave);
 }
 
+async function autenticarCertificado(env, request) {
+  const header = env.CERT_HEADER || "X-Client-Cert";
+  const raw = request.headers.get(header) || "";
+  const segredo = request.headers.get("X-Proxy-Secret") || "";
+  if (!raw) return { ok: false, status: 401, body: { erro: "certificado não apresentado" } };
+  if (!env.PROXY_SECRET || !safeEqual(segredo, env.PROXY_SECRET)) {
+    return { ok: false, status: 401, body: { erro: "proxy não autorizado" } };
+  }
+  let info = null;
+  try {
+    info = await certInfoFromHeader(raw);
+  } catch {
+    info = null;
+  }
+  if (!info) return { ok: false, status: 403, body: { erro: "certificado inválido" } };
+  const hj = todayISO(env);
+  const u = await first(env, "SELECT * FROM usuarios WHERE fp=? AND ativo=1", info.fp);
+  if (!u || !(info.ini <= hj && hj <= info.fim)) {
+    return { ok: false, status: 403, body: { erro: "certificado não autorizado, inativo ou vencido" } };
+  }
+  return {
+    ok: true,
+    user: { id: u.id, nome: u.nome, perfil: u.perfil, validade: u.validade, fonte: "certificado" },
+  };
+}
+
 export async function authenticate(env, request, url) {
   if (url.pathname.startsWith("/webhook/")) return { ok: true, user: null };
   if (url.pathname === "/api/login") return { ok: true, user: null };
+  if (url.pathname === "/api/auth-config") return { ok: true, user: null };
 
   // chamada automática da régua (cron externo) com token dedicado
   if (
@@ -585,7 +612,7 @@ export async function authenticate(env, request, url) {
   }
 
   // sessão criada pelo formulário de login (cookie HMAC)
-  if (senha) {
+  if (senha || env.SESSION_SECRET) {
     const sess = await lerSessao(
       env,
       getCookie(request, SESSION_COOKIE_HOST) || getCookie(request, SESSION_COOKIE),
@@ -626,37 +653,71 @@ export async function authenticate(env, request, url) {
 
   // certificado digital (header definido pelo proxy/mTLS)
   if (certOn) {
-    const header = env.CERT_HEADER || "X-Client-Cert";
-    const raw = request.headers.get(header) || "";
-    const segredo = request.headers.get("X-Proxy-Secret") || "";
-    if (raw && env.PROXY_SECRET && safeEqual(segredo, env.PROXY_SECRET)) {
-      let info = null;
-      try {
-        info = await certInfoFromHeader(raw);
-      } catch {
-        info = null;
-      }
-      if (info) {
-        const hj = todayISO(env);
-        const u = await first(env, "SELECT * FROM usuarios WHERE fp=? AND ativo=1", info.fp);
-        if (u && info.ini <= hj && hj <= info.fim) {
-          return {
-            ok: true,
-            user: { id: u.id, nome: u.nome, perfil: u.perfil, validade: u.validade, fonte: "certificado" },
-          };
-        }
-        return { ok: false, status: 403, body: { erro: "certificado não autorizado, inativo ou vencido" } };
-      }
-      return { ok: false, status: 403, body: { erro: "certificado inválido" } };
-    }
+    const cert = await autenticarCertificado(env, request);
+    if (cert.ok) return cert;
+    if (cert.status !== 401) return cert;
   }
 
   const extra = senha ? { "WWW-Authenticate": 'Basic realm="Renovacoes", charset="UTF-8"' } : {};
   return { ok: false, status: 401, body: { erro: "autenticação necessária" }, extra };
 }
 
+function destinoSeguro(next) {
+  if (!next) return "/";
+  try {
+    const u = new URL(next, "https://local.invalid");
+    if (u.origin !== "https://local.invalid") return "/";
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return "/";
+  }
+}
+
+function redirecionar(url, destino) {
+  return withSecurityHeaders(
+    new Response(null, { status: 302, headers: { Location: new URL(destino, url).toString() } }),
+  );
+}
+
+// Recebe o certificado encaminhado pelo proxy mTLS, cria a sessão e volta ao painel.
+export async function certLogin(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const destino = destinoSeguro(url.searchParams.get("next"));
+  if (!env.DB) return redirecionar(url, "/login?erro=cert");
+  if (env.AUTH_CERT !== "1") return redirecionar(url, "/login?erro=cert_off");
+  if (!env.SESSION_SECRET && !env.PAINEL_SENHA) return redirecionar(url, "/login?erro=cert_off");
+
+  const cert = await autenticarCertificado(env, request);
+  if (!cert.ok) {
+    console.warn("cert-login:", cert.status, cert.body?.erro || "");
+    return redirecionar(url, "/login?erro=cert");
+  }
+
+  const token = await criarSessao(env, cert.user);
+  const seguro = url.protocol === "https:";
+  const nome = seguro ? SESSION_COOKIE_HOST : SESSION_COOKIE;
+  const secure = seguro ? "; Secure" : "";
+  const headers = new Headers({
+    Location: new URL(destino, url).toString(),
+    "Set-Cookie":
+      `${nome}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; ` +
+      `Max-Age=${SESSION_TTL}${secure}`,
+  });
+  return withSecurityHeaders(new Response(null, { status: 302, headers }));
+}
+
 async function rotaGet(env, K, url, user, admin) {
   const p = url.pathname;
+  if (p === "/api/auth-config") {
+    return json({
+      cert:
+        env.AUTH_CERT === "1" &&
+        Boolean(env.PROXY_SECRET) &&
+        Boolean(env.SESSION_SECRET || env.PAINEL_SENHA),
+      certLoginUrl: env.CERT_LOGIN_URL || "",
+    });
+  }
   const mes = url.searchParams.get("mes");
   if (mes && !MES_RE.test(mes)) throw new HttpError(400, "mês inválido: use AAAA-MM");
 
