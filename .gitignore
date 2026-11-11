@@ -16,3 +16,4 @@ cloudflare/.wrangler/
 cloudflare/.dev.vars
 cloudflare/.env
 CREDENCIAIS-NOVAS.txt
+backups/
