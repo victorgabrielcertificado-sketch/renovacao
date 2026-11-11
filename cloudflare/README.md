@@ -53,7 +53,7 @@ Em outro terminal:
 
 ```bash
 npm test              # 8 testes unitários (planilha, datas, certificado, auth)
-npm run test:api      # 22 verificações de integração (servidor precisa estar rodando)
+npm run test:api      # 23 verificações de integração (servidor precisa estar rodando)
 ```
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
@@ -72,6 +72,8 @@ Copie o `database_id` retornado para `wrangler.toml` (substitua o `00000000-...`
 
 ```bash
 npx wrangler d1 execute renovacao --remote --file=schema.sql
+# Se o banco já existia antes da versão com senha individual:
+npx wrangler d1 execute renovacao --remote --file=migrations/2026-11-11-senha-usuarios.sql
 ```
 
 ### 2. Criar o projeto Pages
@@ -101,7 +103,7 @@ npx wrangler pages secret put EMAIL_FROM --project-name renovacao
 
 | Variável | Para que serve |
 |---|---|
-| `PAINEL_SENHA` | senha do formulário de login e do Basic Auth de emergência (admin). **Defina antes do primeiro deploy.** |
+| `PAINEL_SENHA` | senha de emergência do admin e do Basic Auth (não é mais o único login). **Defina antes do primeiro deploy.** |
 | `PAINEL_USER` | usuário do formulário/Basic Auth (padrão `admin`) |
 | `SESSION_SECRET` | chave HMAC do cookie de sessão (opcional; padrão: `PAINEL_SENHA`) |
 | `WEBHOOK_TOKEN` | token exigido em `/webhook/kommo?t=...` |
@@ -130,12 +132,16 @@ em uso; a Cloudflare atribui um sufixo quando isso acontece).
 > **Primeiro acesso:** sem `PAINEL_SENHA`, o app responde **503** em `*.pages.dev` de propósito.
 > Defina `PAINEL_SENHA` e faça o deploy novamente.
 
-## Login pelo formulário (padrão)
+## Login pelo formulário e usuários
 
-Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redirecionada para
-`/login`. O formulário troca usuário/senha por um **cookie de sessão HMAC** (`HttpOnly`,
-`SameSite=Lax`, 12 horas), e o botão **Sair** remove o cookie.
+O painel exige sessão. O formulário troca usuário/senha por um **cookie de sessão HMAC**
+(`HttpOnly`, `SameSite=Lax`, 12 horas), e o botão **Sair** remove o cookie.
 
+- **Admin de emergência:** `PAINEL_USER` + `PAINEL_SENHA` (também aceito no Basic Auth).
+- **Usuários individuais:** cadastrados na aba **Usuários** com nome, e-mail, perfil e senha.
+  O login aceita o **nome** ou o **e-mail** cadastrado.
+- As senhas são gravadas como hash **PBKDF2-SHA256 com salt**; nunca em texto puro.
+- O admin pode redefinir a senha de qualquer usuário pelo botão **Senha** na lista.
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).
 - Trocar a senha (ou o `SESSION_SECRET`) invalida todas as sessões abertas.
 - O Basic Auth continua aceito para scripts/CLI.
@@ -159,7 +165,8 @@ Com `PAINEL_SENHA` definida, qualquer navegação ao painel sem sessão é redir
 | **WAF / DDoS** | Camada de borda da Cloudflare. Regras de WAF, Rate Limiting e Access exigem um **domínio próprio** apontado para o projeto Pages (o `*.pages.dev` não pertence à sua zona). |
 | **OAuth 2.0 / OIDC** | **Cloudflare Access** (Google, GitHub, OTP por e-mail etc.) exige domínio próprio. O app ainda **não valida o JWT do Access**; não ative `TRUST_ACCESS=1` sem essa validação. |
 | **Certificado digital** | mTLS terminado no proxy; o app valida fingerprint SHA-256, usuário ativo e validade. `/cert-login` cria a sessão após o handshake. |
-| **Sessão/JWT** | JWT compacto HS256 com `sub`, `role`, `iat`, `exp` (12 h) e `csrf`, assinado com `SESSION_SECRET` + `PAINEL_SENHA`. |
+| **Sessão/JWT** | JWT compacto HS256 com `sub`, `id`, `role`, `iat`, `exp` (12 h) e `csrf`, assinado com `SESSION_SECRET` + `PAINEL_SENHA`. |
+| **Senhas de usuários** | PBKDF2-SHA256 com salt por usuário (25.000 iterações), armazenado como `pbkdf2$iter$salt$hash`; nunca em texto puro. |
 | **SQL injection** | Todas as consultas D1 usam prepared statements com bind de parâmetros. |
 | **XSS** | CSP + escape (`esc()`) de todo dado vindo do banco/planilha antes de ir para o HTML. |
 

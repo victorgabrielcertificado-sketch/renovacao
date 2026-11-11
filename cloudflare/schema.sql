@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS usuarios(
   nome TEXT NOT NULL,
   email TEXT,
   perfil TEXT NOT NULL DEFAULT 'operador',
+  senha_hash TEXT,
   fp TEXT UNIQUE,
   sujeito TEXT,
   validade TEXT,

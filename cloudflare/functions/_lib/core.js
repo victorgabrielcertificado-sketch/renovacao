@@ -421,6 +421,63 @@ function b64urlDecode(texto) {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 }
 
+const SENHA_ITER = 25000;
+const SENHA_MIN = 6;
+const SENHA_MAX = 200;
+
+function safeEqualBytes(a, b) {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a[i] ^ b[i];
+  return r === 0;
+}
+
+async function hashSenha(senha) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const chave = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(String(senha)),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: SENHA_ITER, hash: "SHA-256" },
+    chave,
+    256,
+  );
+  return `pbkdf2$${SENHA_ITER}$${b64url(salt)}$${b64url(new Uint8Array(bits))}`;
+}
+
+async function verificarSenha(senha, guardado) {
+  const partes = String(guardado || "").split("$");
+  if (partes.length !== 4 || partes[0] !== "pbkdf2") return false;
+  const iter = Number(partes[1]);
+  if (!Number.isInteger(iter) || iter < 1000 || iter > 1000000) return false;
+  let salt;
+  let esperado;
+  try {
+    salt = b64urlDecode(partes[2]);
+    esperado = b64urlDecode(partes[3]);
+  } catch {
+    return false;
+  }
+  if (!esperado.length) return false;
+  const chave = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(String(senha)),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: iter, hash: "SHA-256" },
+    chave,
+    esperado.length * 8,
+  );
+  return safeEqualBytes(new Uint8Array(bits), esperado);
+}
+
 function getCookie(request, nome) {
   const raw = request.headers.get("Cookie") || "";
   for (const parte of raw.split(";")) {
@@ -464,6 +521,7 @@ export async function criarSessao(env, user) {
   const header = b64urlJson({ alg: "HS256", typ: "JWT" });
   const payload = b64urlJson({
     sub: user.nome,
+    id: user.id ?? null,
     role: user.perfil,
     iat: agora,
     exp: agora + SESSION_TTL,
@@ -494,6 +552,7 @@ export async function lerSessao(env, token) {
     if (!dados || !dados.exp || dados.exp < agora || !dados.iat || dados.iat > agora + 60) return null;
     return {
       nome: dados.sub || "Administrador",
+      id: Number.isInteger(dados.id) ? dados.id : null,
       perfil: dados.role === "admin" ? "admin" : "operador",
       validade: null,
       fonte: "sessao",
@@ -738,7 +797,10 @@ async function rotaGet(env, K, url, user, admin) {
   if (p === "/api/usuarios") {
     if (!admin) throw new HttpError(403, "apenas administradores");
     return json(
-      await all(env, "SELECT id,nome,email,perfil,sujeito,validade,ativo FROM usuarios ORDER BY nome"),
+      await all(
+        env,
+        "SELECT id,nome,email,perfil,sujeito,validade,ativo,(senha_hash IS NOT NULL) AS senha_definida FROM usuarios ORDER BY nome",
+      ),
     );
   }
   if (p === "/api/config") {
@@ -900,7 +962,6 @@ async function rotaPost(env, K, url, request, user, admin) {
   }
 
   if (p === "/api/login") {
-    if (!env.PAINEL_SENHA) throw new HttpError(400, "login por senha desativado");
     const origem = request.headers.get("Origin");
     if (origem && origem !== url.origin) throw new HttpError(403, "origem inválida");
     const chave = await chaveRate(env, request);
@@ -918,12 +979,34 @@ async function rotaPost(env, K, url, request, user, admin) {
     }
     const usuario = String(d?.usuario || "admin").trim();
     const informada = String(d?.senha || "");
-    if (!safeEqual(usuario, env.PAINEL_USER || "admin") || !safeEqual(informada, env.PAINEL_SENHA)) {
+
+    let conta = null;
+    // senha de emergência do administrador (PAINEL_SENHA)
+    if (
+      env.PAINEL_SENHA &&
+      safeEqual(usuario, env.PAINEL_USER || "admin") &&
+      safeEqual(informada, env.PAINEL_SENHA)
+    ) {
+      conta = { nome: env.PAINEL_USER || "admin", perfil: "admin", validade: null };
+    } else if (informada) {
+      // senha individual gravada na tabela usuarios
+      const u = await first(
+        env,
+        "SELECT * FROM usuarios WHERE ativo=1 AND (lower(nome)=lower(?) OR (email IS NOT NULL AND lower(email)=lower(?))) ORDER BY (perfil='admin') DESC, id LIMIT 1",
+        usuario,
+        usuario,
+      );
+      if (u?.senha_hash && (await verificarSenha(informada, u.senha_hash))) {
+        conta = { id: u.id, nome: u.nome, perfil: u.perfil, validade: u.validade };
+      }
+    }
+
+    if (!conta) {
       await registrarFalha(env, chave);
       throw new HttpError(401, "usuário ou senha inválidos");
     }
     await limparFalhas(env, chave);
-    const token = await criarSessao(env, { nome: "Administrador", perfil: "admin" });
+    const token = await criarSessao(env, conta);
     const seguro = url.protocol === "https:";
     const nome = seguro ? SESSION_COOKIE_HOST : SESSION_COOKIE;
     const secure = seguro ? "; Secure" : "";
@@ -961,6 +1044,46 @@ async function rotaPost(env, K, url, request, user, admin) {
     throw new HttpError(400, "JSON inválido");
   }
   if (!d || typeof d !== "object" || Array.isArray(d)) throw new HttpError(400, "JSON inválido");
+
+  if (p === "/api/usuarios/senha") {
+    const uid = intOrNull(d.id);
+    if (uid === null) throw new HttpError(400, "id inválido");
+    const senha = String(d.senha || "");
+    if (senha.length < SENHA_MIN || senha.length > SENHA_MAX) {
+      throw new HttpError(400, `a senha deve ter entre ${SENHA_MIN} e ${SENHA_MAX} caracteres`);
+    }
+    const atualizado = await first(
+      env,
+      "UPDATE usuarios SET senha_hash=? WHERE id=? RETURNING id",
+      await hashSenha(senha),
+      uid,
+    );
+    if (!atualizado) throw new HttpError(404, "usuário não encontrado");
+    return json({ ok: true });
+  }
+
+  if (p === "/api/usuarios/senha-criar") {
+    const nome = String(d.nome || "").trim().slice(0, 120);
+    if (!nome) throw new HttpError(400, "informe o nome");
+    const email = String(d.email || "").trim().slice(0, 200) || null;
+    if (email && !EMAIL_RE.test(email)) throw new HttpError(400, "informe um e-mail válido");
+    const perfil = String(d.perfil || "") === "admin" ? "admin" : "operador";
+    const senha = String(d.senha || "");
+    if (senha.length < SENHA_MIN || senha.length > SENHA_MAX) {
+      throw new HttpError(400, `a senha deve ter entre ${SENHA_MIN} e ${SENHA_MAX} caracteres`);
+    }
+    const existe = await first(env, "SELECT id FROM usuarios WHERE lower(nome)=lower(?) LIMIT 1", nome);
+    if (existe) throw new HttpError(409, "já existe um usuário com esse nome");
+    const ins = await first(
+      env,
+      "INSERT INTO usuarios(nome,email,perfil,senha_hash) VALUES(?,?,?,?) RETURNING id",
+      nome,
+      email,
+      perfil,
+      await hashSenha(senha),
+    );
+    return json({ ok: true, id: ins?.id ?? null });
+  }
 
   if (p === "/api/avancar") {
     const rid = intOrNull(d.id);

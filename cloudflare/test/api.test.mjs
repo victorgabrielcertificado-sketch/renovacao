@@ -356,6 +356,68 @@ async function main() {
     assert.equal(eu.json.perfil, "operador");
   });
 
+  await passo("cadastro de usuário com senha e login individual", async () => {
+    const nome = "Teste Senha " + Date.now();
+    const criar = await req("/api/usuarios/senha-criar", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nome,
+        email: "teste.senha@teste.com",
+        perfil: "operador",
+        senha: "segredo123",
+      }),
+    });
+    assert.equal(criar.status, 200);
+    const id = criar.json.id;
+    assert.ok(id);
+
+    const login = await req("/api/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "fetch",
+        "CF-Connecting-IP": "198.51.100.90",
+      },
+      body: JSON.stringify({ usuario: nome, senha: "segredo123" }),
+    });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie") || "";
+    const eu = await req("/api/eu", { headers: { Cookie: cookie.split(";")[0] } });
+    assert.equal(eu.status, 200);
+    assert.equal(eu.json.nome, nome);
+    assert.equal(eu.json.perfil, "operador");
+
+    const troca = await req("/api/usuarios/senha", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, senha: "nova123" }),
+    });
+    assert.equal(troca.status, 200);
+
+    const velho = await req("/api/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "fetch",
+        "CF-Connecting-IP": "198.51.100.91",
+      },
+      body: JSON.stringify({ usuario: nome, senha: "segredo123" }),
+    });
+    assert.equal(velho.status, 401);
+
+    const novo = await req("/api/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "fetch",
+        "CF-Connecting-IP": "198.51.100.92",
+      },
+      body: JSON.stringify({ usuario: nome, senha: "nova123" }),
+    });
+    assert.equal(novo.status, 200);
+  });
+
   await passo("rota inexistente retorna 404", async () => {
     assert.equal((await req("/api/naoexiste", { headers: { Authorization: BASIC } })).status, 404);
   });
