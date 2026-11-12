@@ -4,7 +4,18 @@ import test from "node:test";
 import * as XLSX from "xlsx";
 import * as x509 from "@peculiar/x509";
 
-import { lerLinhas, norm, numero, telefone, toISODate } from "../functions/_lib/import.js";
+import {
+  DURACOES,
+  addMeses,
+  duracaoMeses,
+  duracaoValida,
+  lerLinhas,
+  norm,
+  numero,
+  telefone,
+  tipoRegra,
+  toISODate,
+} from "../functions/_lib/import.js";
 import { certInfo } from "../functions/_lib/certs.js";
 import { authenticate } from "../functions/_lib/core.js";
 
@@ -26,6 +37,55 @@ test("converte datas ISO, dd/mm/aaaa e serial do Excel", () => {
   assert.equal(toISODate("31/02/2026"), null);
   assert.equal(toISODate(46334), "2026-11-08"); // serial do Excel
   assert.equal(toISODate(""), null);
+});
+
+test("regras de validade por tipo de certificado", () => {
+  assert.deepEqual(DURACOES.a1, [12]);
+  assert.deepEqual(DURACOES.a3, [12, 24, 36]);
+  assert.deepEqual(DURACOES.safeid, [3, 12]);
+  assert.equal(tipoRegra("e-CNPJ A1"), "a1");
+  assert.equal(tipoRegra("e-CPF A3"), "a3");
+  assert.equal(tipoRegra("SafeID"), "safeid");
+  assert.equal(duracaoMeses("1 ano", "e-CNPJ A1"), 12);
+  assert.equal(duracaoMeses("3 meses", "SafeID"), 3);
+  assert.equal(duracaoMeses(3, "e-CNPJ A3"), 36);
+  assert.equal(duracaoMeses(3, "SafeID"), 3);
+  assert.equal(duracaoMeses(null, "e-CNPJ A3 2 anos"), 24);
+  assert.equal(duracaoValida("e-CNPJ A1", 24), false);
+  assert.equal(duracaoValida("e-CNPJ A3", 24), true);
+  assert.equal(duracaoValida("SafeID", 3), true);
+  assert.equal(addMeses("2026-01-31", 1), "2026-02-28");
+  assert.equal(addMeses("2024-02-29", 12), "2025-02-28");
+});
+
+test("calcula vencimento pela emissão e duração", () => {
+  const csv =
+    "Cliente;Tipo;Emissão;Duração\n" +
+    "ACME;e-CNPJ A1;10/01/2026;1 ano\n" +
+    "BETA;e-CPF A3;10/01/2026;2 anos\n" +
+    "GAMA;SafeID;10/01/2026;3 meses\n";
+  const r = lerLinhas(enc(csv), "regras.csv");
+  assert.equal(r.linhas.length, 3);
+  assert.deepEqual(
+    r.linhas.map((l) => l.vencimento),
+    ["2027-01-10", "2028-01-10", "2026-04-10"],
+  );
+  assert.equal(r.avisos, 0);
+});
+
+test("aceita coluna Validade com duração e calcula a partir da emissão", () => {
+  const csv = "Cliente;Tipo;Emissão;Validade\nACME;e-CNPJ A3;10/01/2026;3 anos\n";
+  const r = lerLinhas(enc(csv), "regras.csv");
+  assert.equal(r.linhas[0].vencimento, "2029-01-10");
+  assert.equal(r.avisos, 0);
+});
+
+test("avisa quando o vencimento não confere com a regra", () => {
+  const csv = "Cliente;Tipo;Emissão;Vencimento\nACME;e-CNPJ A1;10/01/2026;10/01/2028\n";
+  const r = lerLinhas(enc(csv), "regras.csv");
+  assert.equal(r.linhas.length, 1);
+  assert.equal(r.avisos, 1);
+  assert.match(r.detalhes[0], /não confere/);
 });
 
 test("lê CSV com ponto e vírgula, BOM e vírgula decimal", () => {

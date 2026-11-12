@@ -52,11 +52,25 @@ npm run dev           # http://127.0.0.1:8788
 Em outro terminal:
 
 ```bash
-npm test              # 8 testes unitários (planilha, datas, certificado, auth)
+npm test              # 12 testes unitários (planilha, datas, validade, certificado, auth)
 npm run test:api      # 23 verificações de integração (servidor precisa estar rodando)
 ```
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
+
+## Regras de validade dos certificados
+
+| Tipo | Duração permitida |
+|---|---|
+| A1 | 1 ano (12 meses) |
+| A3 | 1, 2 ou 3 anos (12, 24 ou 36 meses) |
+| SafeID | 3 meses ou 1 ano (3 ou 12 meses) |
+
+A planilha pode trazer a data de **Vencimento** ou, no lugar dela, **Emissão** + **Duração**.
+Quando só há emissão e duração, o sistema calcula o vencimento. Quando as duas datas vêm
+preenchidas, ele confere a regra e mostra um aviso (sem bloquear a importação) se não bater.
+A duração aceita textos como `3 meses`, `1 ano` e `2 anos`; em colunas numéricas, A3 `1/2/3`
+é interpretado como anos e SafeID `1` = 1 ano, `3` = 3 meses.
 
 ## Publicar no Cloudflare Pages
 

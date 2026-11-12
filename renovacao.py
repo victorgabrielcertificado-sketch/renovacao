@@ -13,7 +13,7 @@ Config por variáveis de ambiente (sem elas, e-mail e Kommo rodam em modo simula
   Painel: PORT, HOST, PAINEL_USER, PAINEL_SENHA, WEBHOOK_TOKEN, DB
   Login por certificado: AUTH_CERT=1, PROXY_SECRET (o proxy repassa X-Client-Cert em PEM urlencoded)
 """
-import argparse, base64, hmac, json, os, random, re, smtplib, sqlite3, tempfile, threading, time, unicodedata, urllib.error, urllib.request
+import argparse, base64, calendar, hmac, json, os, random, re, smtplib, sqlite3, tempfile, threading, time, unicodedata, urllib.error, urllib.request
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +32,8 @@ except ImportError:
 REGUA = [60, 30, 15, 7, 1, -3]   # dias para o vencimento em que cada aviso dispara (negativo = vencido)
 LIMITE_ATRASO = 30               # não notifica quem venceu há mais de X dias
 STATUS = ["a_vencer", "email_enviado", "whatsapp_enviado", "agendado", "emitido", "pago", "perdido"]
+# Durações permitidas, em meses, por tipo de certificado.
+DURACOES = {"a1": [12], "a3": [12, 24, 36], "safeid": [3, 12]}
 MAX_UPLOAD = 20 * 1024 * 1024    # 20 MB (planilhas)
 MAX_CERT = 1 * 1024 * 1024       # 1 MB (certificados)
 MES_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -112,8 +114,12 @@ ALIAS = {"cliente": ["cliente", "nome", "nome do cliente", "razao social", "empr
          "email": ["email", "e-mail", "e mail", "correio eletronico"],
          "telefone": ["telefone", "whatsapp", "celular", "fone", "tel"],
          "tipo": ["tipo", "certificado", "produto", "tipo de certificado"],
-         "vencimento": ["vencimento", "validade", "data de vencimento", "data vencimento", "expira em"],
-         "valor": ["valor", "preco", "valor da renovacao"]}
+         "vencimento": ["vencimento", "data de vencimento", "data vencimento", "expira em", "validade"],
+         "valor": ["valor", "preco", "valor da renovacao"],
+         "emissao": ["emissao", "data de emissao", "data emissao", "emitido em",
+                     "inicio", "data de inicio", "inicio da validade"],
+         "duracao": ["duracao", "periodo", "tempo", "duracao em meses", "duracao em anos",
+                     "validade em meses", "validade em anos", "validade"]}
 
 
 def _norm(s):
@@ -125,10 +131,78 @@ _ALIAS = {k: {_norm(a) for a in v} for k, v in ALIAS.items()}
 
 
 def _coluna(df, chave):
-    for c in df.columns:
-        if _norm(c) in _ALIAS[chave]:
-            return c
+    for alias in ALIAS[chave]:
+        alvo = _norm(alias)
+        for c in df.columns:
+            if _norm(c) == alvo:
+                return c
     return None
+
+
+def _tipo_regra(tipo):
+    t = _norm(tipo)
+    if re.search(r"\bsafe\s*id\b|\bsafeid\b", t):
+        return "safeid"
+    if re.search(r"\ba1\b", t):
+        return "a1"
+    if re.search(r"\ba3\b", t):
+        return "a3"
+    return None
+
+
+def _meses_texto(valor):
+    t = _norm(valor)
+    m = re.search(r"(\d+)\s*(mes|meses)\b", t)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(\d+)\s*(ano|anos)\b", t)
+    if m:
+        return int(m.group(1)) * 12
+    return None
+
+
+def _duracao_meses(valor, tipo):
+    regra = _tipo_regra(tipo)
+    if valor is not None and not (isinstance(valor, float) and pd.isna(valor)) and str(valor).strip() != "":
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+            n = int(valor)
+            if regra == "a3" and n in (1, 2, 3):
+                return n * 12
+            if regra == "a1" and n == 1:
+                return 12
+            if regra == "safeid" and n == 1:
+                return 12
+            return n if n > 0 else None
+        por_texto = _meses_texto(valor)
+        if por_texto is not None:
+            return por_texto
+        m = re.fullmatch(r"(\d+)", _norm(valor))
+        if m:
+            n = int(m.group(1))
+            if regra == "a3" and n in (1, 2, 3):
+                return n * 12
+            if regra == "a1" and n == 1:
+                return 12
+            if regra == "safeid" and n == 1:
+                return 12
+            return n if n > 0 else None
+    return _meses_texto(tipo)
+
+
+def _duracao_valida(tipo, meses):
+    regra = _tipo_regra(tipo)
+    if not regra or not meses:
+        return True
+    return meses in DURACOES[regra]
+
+
+def _add_meses(dia, meses):
+    if not isinstance(dia, date) or not isinstance(meses, int) or meses <= 0:
+        return None
+    total = dia.month - 1 + meses
+    ano = dia.year + total // 12
+    mes = total % 12 + 1
+    return date(ano, mes, min(dia.day, calendar.monthrange(ano, mes)[1]))
 
 
 def _texto(v):
@@ -181,16 +255,32 @@ def importar(path):
     df = _ler_planilha(path)
     df = df.loc[:, ~df.columns.duplicated()]
     col = {k: _coluna(df, k) for k in ALIAS}
-    faltando = [k for k in ("cliente", "vencimento") if not col[k]]
+    faltando = []
+    if not col["cliente"]:
+        faltando.append("cliente")
+    if not col["vencimento"] and not col["emissao"]:
+        faltando.append("vencimento ou emissao")
     if faltando:
         raise ValueError("colunas obrigatórias ausentes: " + ", ".join(faltando)
                          + " (encontradas: " + ", ".join(map(str, df.columns)) + ")")
 
-    venc_serie = df[col["vencimento"]]
-    if pd.api.types.is_numeric_dtype(venc_serie):   # serial do Excel (ex.: 46000)
-        venc = pd.to_datetime(venc_serie, unit="D", origin="1899-12-30", errors="coerce")
+    if col["vencimento"]:
+        venc_serie = df[col["vencimento"]]
+        if pd.api.types.is_numeric_dtype(venc_serie):   # serial do Excel (ex.: 46000)
+            venc = pd.to_datetime(venc_serie, unit="D", origin="1899-12-30", errors="coerce")
+        else:
+            venc = pd.to_datetime(venc_serie, dayfirst=True, errors="coerce")
     else:
-        venc = pd.to_datetime(venc_serie, dayfirst=True, errors="coerce")
+        venc = pd.Series(pd.NaT, index=df.index)
+
+    if col["emissao"]:
+        em_serie = df[col["emissao"]]
+        if pd.api.types.is_numeric_dtype(em_serie):
+            emissao = pd.to_datetime(em_serie, unit="D", origin="1899-12-30", errors="coerce")
+        else:
+            emissao = pd.to_datetime(em_serie, dayfirst=True, errors="coerce")
+    else:
+        emissao = pd.Series(pd.NaT, index=df.index)
 
     dados = pd.DataFrame({
         "cliente": df[col["cliente"]],
@@ -198,25 +288,72 @@ def importar(path):
         "telefone": df[col["telefone"]] if col["telefone"] else None,
         "tipo": df[col["tipo"]] if col["tipo"] else "e-CNPJ",
         "vencimento": venc,
+        "vencimento_bruto": df[col["vencimento"]] if col["vencimento"] else None,
+        "emissao": emissao,
+        "duracao": df[col["duracao"]] if col["duracao"] else None,
         "valor": pd.to_numeric(df[col["valor"]], errors="coerce") if col["valor"] else None,
     })
 
     c = db()
-    novas = atualizadas = ignoradas = 0
+    novas = atualizadas = ignoradas = avisos = 0
+    detalhes = []
+
+    def avisar(msg):
+        nonlocal avisos
+        avisos += 1
+        if len(detalhes) < 10:
+            detalhes.append(msg)
+
     c.execute("BEGIN IMMEDIATE")          # importação tudo-ou-nada
     try:
         for r in dados.to_dict("records"):
             cliente = _texto(r["cliente"])
+            tipo = _texto(r["tipo"]) or "e-CNPJ"
+            regra = _tipo_regra(tipo)
             dia = r["vencimento"]
-            if not cliente or pd.isna(dia):
+            vencimento = None if pd.isna(dia) else dia.date()
+            em = r["emissao"]
+            emissao_dia = None if pd.isna(em) else em.date()
+            duracao = _duracao_meses(r["duracao"], tipo)
+
+            # coluna "Validade" pode vir como duração ("1 ano", "3 meses")
+            if vencimento is None and r["vencimento_bruto"] is not None:
+                alt = _duracao_meses(r["vencimento_bruto"], tipo)
+                if alt is not None:
+                    duracao = duracao if duracao is not None else alt
+
+            if vencimento is None:
+                if emissao_dia and duracao is not None:
+                    vencimento = _add_meses(emissao_dia, duracao)
+                elif emissao_dia and regra and len(DURACOES[regra]) == 1:
+                    duracao = DURACOES[regra][0]
+                    vencimento = _add_meses(emissao_dia, duracao)
+
+            if not cliente or vencimento is None:
                 ignoradas += 1
                 continue
-            tipo = _texto(r["tipo"]) or "e-CNPJ"
+
+            if duracao is not None and not _duracao_valida(tipo, duracao):
+                permitidas = ", ".join(map(str, DURACOES[regra])) if regra else "—"
+                avisar(f"{cliente}: {tipo} com {duracao} meses; permitido: {permitidas} meses")
+
+            iso = vencimento.isoformat()
+            if emissao_dia:
+                if duracao is not None:
+                    esperado = _add_meses(emissao_dia, duracao)
+                    if esperado and esperado.isoformat() != iso:
+                        avisar(f"{cliente}: vencimento {iso} não confere com "
+                               f"{emissao_dia.isoformat()} + {duracao} meses ({esperado.isoformat()})")
+                elif regra:
+                    permitidas = DURACOES[regra]
+                    if not any(_add_meses(emissao_dia, m).isoformat() == iso for m in permitidas):
+                        avisar(f"{cliente}: vencimento {iso} não confere com "
+                               f"{emissao_dia.isoformat()} + {'/'.join(map(str, permitidas))} meses")
+
             email = _texto(r["email"])
             email = email if email and EMAIL_RE.match(email) else None
             fone = _telefone(r["telefone"])
             valor = None if pd.isna(r["valor"]) else float(r["valor"])
-            iso = dia.strftime("%Y-%m-%d")
             atual = c.execute("SELECT id FROM renovacoes WHERE cliente=? AND tipo=? AND vencimento=?",
                               (cliente, tipo, iso)).fetchone()
             if atual:
@@ -234,8 +371,10 @@ def importar(path):
     except Exception:
         c.execute("ROLLBACK")
         raise
-    print(f"{novas} novas, {atualizadas} atualizadas, {ignoradas} ignoradas ({len(dados)} linhas)")
-    return {"novas": novas, "atualizadas": atualizadas, "ignoradas": ignoradas}
+    print(f"{novas} novas, {atualizadas} atualizadas, {ignoradas} ignoradas, "
+          f"{avisos} avisos ({len(dados)} linhas)")
+    return {"novas": novas, "atualizadas": atualizadas, "ignoradas": ignoradas,
+            "avisos": avisos, "detalhes": detalhes}
 
 
 # ---------- 2. Kommo ----------

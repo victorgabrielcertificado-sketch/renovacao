@@ -6,8 +6,34 @@ export const ALIAS = {
   email: ["email", "e-mail", "e mail", "correio eletronico"],
   telefone: ["telefone", "whatsapp", "fone", "tel", "celular"],
   tipo: ["tipo", "certificado", "produto", "tipo de certificado"],
-  vencimento: ["vencimento", "validade", "data de vencimento", "data vencimento", "expira em"],
+  vencimento: ["vencimento", "data de vencimento", "data vencimento", "expira em", "validade"],
   valor: ["valor", "preco", "valor da renovacao"],
+  emissao: [
+    "emissao",
+    "data de emissao",
+    "data emissao",
+    "emitido em",
+    "inicio",
+    "data de inicio",
+    "inicio da validade",
+  ],
+  duracao: [
+    "duracao",
+    "periodo",
+    "tempo",
+    "duracao em meses",
+    "duracao em anos",
+    "validade em meses",
+    "validade em anos",
+    "validade",
+  ],
+};
+
+// Durações permitidas, em meses, por tipo de certificado.
+export const DURACOES = {
+  a1: [12],
+  a3: [12, 24, 36],
+  safeid: [3, 12],
 };
 
 export const norm = (s) =>
@@ -74,6 +100,65 @@ export function toISODate(v) {
   return null;
 }
 
+export function tipoRegra(tipo) {
+  const t = norm(tipo);
+  if (/\bsafe\s*id\b|\bsafeid\b/.test(t)) return "safeid";
+  if (/\ba1\b/.test(t)) return "a1";
+  if (/\ba3\b/.test(t)) return "a3";
+  return null;
+}
+
+function mesesDeTexto(valor) {
+  const t = norm(valor);
+  let m = t.match(/(\d+)\s*(mes|meses)\b/);
+  if (m) return Number(m[1]);
+  m = t.match(/(\d+)\s*(ano|anos)\b/);
+  if (m) return Number(m[1]) * 12;
+  return null;
+}
+
+export function duracaoMeses(valor, tipo) {
+  const regra = tipoRegra(tipo);
+  if (valor != null && valor !== "") {
+    if (typeof valor === "number" && Number.isFinite(valor)) {
+      const n = Math.trunc(valor);
+      if (regra === "a3" && [1, 2, 3].includes(n)) return n * 12;
+      if (regra === "a1" && n === 1) return 12;
+      if (regra === "safeid" && n === 1) return 12;
+      return n > 0 ? n : null;
+    }
+    const porTexto = mesesDeTexto(valor);
+    if (porTexto != null) return porTexto;
+    const s = norm(valor);
+    const m = s.match(/^(\d+)$/);
+    if (m) {
+      const n = Number(m[1]);
+      if (regra === "a3" && [1, 2, 3].includes(n)) return n * 12;
+      if (regra === "a1" && n === 1) return 12;
+      if (regra === "safeid" && n === 1) return 12;
+      return n > 0 ? n : null;
+    }
+  }
+  return mesesDeTexto(tipo);
+}
+
+export function duracaoValida(tipo, meses) {
+  const regra = tipoRegra(tipo);
+  if (!regra || !meses) return true;
+  return DURACOES[regra].includes(meses);
+}
+
+export function addMeses(iso, meses) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso)) || !Number.isInteger(meses) || meses <= 0) {
+    return null;
+  }
+  const [y, m, d] = String(iso).split("-").map(Number);
+  const alvo = new Date(Date.UTC(y, m - 1 + meses, 1));
+  const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
+  alvo.setUTCDate(Math.min(d, ultimo));
+  return `${alvo.getUTCFullYear()}-${pad(alvo.getUTCMonth() + 1)}-${pad(alvo.getUTCDate())}`;
+}
+
 function lerLivro(bytes, nome) {
   const lower = String(nome || "").toLowerCase();
   if (lower.endsWith(".csv")) {
@@ -103,14 +188,23 @@ function mapearColunas(linha) {
   const colunas = {};
   const disponiveis = Object.keys(linha || {});
   for (const chave of Object.keys(ALIAS)) {
-    colunas[chave] = disponiveis.find((c) => ALIAS[chave].includes(norm(c))) || null;
+    colunas[chave] = null;
+    for (const alias of ALIAS[chave]) {
+      const encontrada = disponiveis.find((c) => norm(c) === alias);
+      if (encontrada) {
+        colunas[chave] = encontrada;
+        break;
+      }
+    }
   }
   return colunas;
 }
 
 /**
  * Lê a planilha e devolve linhas já normalizadas. Linhas sem cliente ou sem
- * vencimento válido são contadas como ignoradas.
+ * vencimento válido são contadas como ignoradas. Quando a planilha traz a data
+ * de emissão e a duração (ou a duração no próprio tipo), o vencimento é
+ * calculado e conferido com as regras de validade de cada tipo.
  */
 export function lerLinhas(bytes, nome) {
   const livro = lerLivro(bytes, nome);
@@ -120,7 +214,9 @@ export function lerLinhas(bytes, nome) {
   if (!bruto.length) throw new Error("planilha vazia");
 
   const cols = mapearColunas(bruto[0]);
-  const faltando = ["cliente", "vencimento"].filter((k) => !cols[k]);
+  const faltando = [];
+  if (!cols.cliente) faltando.push("cliente");
+  if (!cols.vencimento && !cols.emissao) faltando.push("vencimento ou emissao");
   if (faltando.length) {
     throw new Error(
       `colunas obrigatórias ausentes: ${faltando.join(", ")} (encontradas: ${Object.keys(bruto[0]).join(", ")})`,
@@ -128,22 +224,72 @@ export function lerLinhas(bytes, nome) {
   }
 
   const linhas = [];
+  const detalhes = [];
   let ignoradas = 0;
+  let avisos = 0;
+  const avisar = (msg) => {
+    avisos++;
+    if (detalhes.length < 10) detalhes.push(msg);
+  };
+
   for (const row of bruto) {
     const cliente = texto(row[cols.cliente]);
-    const vencimento = toISODate(row[cols.vencimento]);
+    const tipo = (cols.tipo ? texto(row[cols.tipo]) : null) || "e-CNPJ";
+    const regra = tipoRegra(tipo);
+    let vencimento = cols.vencimento ? toISODate(row[cols.vencimento]) : null;
+    const emissao = cols.emissao ? toISODate(row[cols.emissao]) : null;
+    let duracao = cols.duracao ? duracaoMeses(row[cols.duracao], tipo) : null;
+
+    // coluna "Validade" pode vir como duração ("1 ano", "3 meses")
+    if (vencimento == null && cols.vencimento) {
+      const alt = duracaoMeses(row[cols.vencimento], tipo);
+      if (alt != null) duracao = duracao ?? alt;
+    }
+
+    if (vencimento == null) {
+      if (emissao && duracao != null) {
+        vencimento = addMeses(emissao, duracao);
+      } else if (emissao && regra && DURACOES[regra].length === 1) {
+        duracao = DURACOES[regra][0];
+        vencimento = addMeses(emissao, duracao);
+      }
+    }
+
     if (!cliente || !vencimento) {
       ignoradas++;
       continue;
     }
+
+    if (duracao != null && !duracaoValida(tipo, duracao)) {
+      avisar(
+        `${cliente}: ${tipo} com ${duracao} meses; permitido: ${DURACOES[regra]?.join(", ") || "—"} meses`,
+      );
+    }
+
+    if (emissao) {
+      if (duracao != null) {
+        const esperado = addMeses(emissao, duracao);
+        if (esperado && esperado !== vencimento) {
+          avisar(`${cliente}: vencimento ${vencimento} não confere com ${emissao} + ${duracao} meses (${esperado})`);
+        }
+      } else if (regra) {
+        const permitidas = DURACOES[regra];
+        if (!permitidas.some((m) => addMeses(emissao, m) === vencimento)) {
+          avisar(
+            `${cliente}: vencimento ${vencimento} não confere com ${emissao} + ${permitidas.join("/")} meses`,
+          );
+        }
+      }
+    }
+
     linhas.push({
       cliente,
       email: cols.email ? texto(row[cols.email]) : null,
       telefone: cols.telefone ? telefone(row[cols.telefone]) : null,
-      tipo: (cols.tipo ? texto(row[cols.tipo]) : null) || "e-CNPJ",
+      tipo,
       vencimento,
       valor: cols.valor ? numero(row[cols.valor]) : null,
     });
   }
-  return { linhas, ignoradas, total: bruto.length };
+  return { linhas, ignoradas, total: bruto.length, avisos, detalhes };
 }

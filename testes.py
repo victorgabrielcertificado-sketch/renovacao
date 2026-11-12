@@ -135,6 +135,48 @@ class Importacao(unittest.TestCase):
         with self.assertRaises(ValueError):
             R.importar(p)
 
+    def test_regras_de_validade_por_tipo(self):
+        self.assertEqual(R.DURACOES, {"a1": [12], "a3": [12, 24, 36], "safeid": [3, 12]})
+        self.assertEqual(R._tipo_regra("e-CNPJ A1"), "a1")
+        self.assertEqual(R._tipo_regra("e-CPF A3"), "a3")
+        self.assertEqual(R._tipo_regra("SafeID"), "safeid")
+        self.assertEqual(R._duracao_meses("2 anos", "e-CNPJ A3"), 24)
+        self.assertEqual(R._duracao_meses("3 meses", "SafeID"), 3)
+        self.assertEqual(R._duracao_meses(3, "e-CNPJ A3"), 36)
+        self.assertEqual(R._duracao_meses(3, "SafeID"), 3)
+        self.assertEqual(R._duracao_meses(None, "e-CNPJ A3 2 anos"), 24)
+        self.assertFalse(R._duracao_valida("e-CNPJ A1", 24))
+        self.assertTrue(R._duracao_valida("e-CNPJ A3", 24))
+        self.assertTrue(R._duracao_valida("SafeID", 3))
+        self.assertEqual(R._add_meses(date(2026, 1, 31), 1), date(2026, 2, 28))
+        self.assertEqual(R._add_meses(date(2024, 2, 29), 12), date(2025, 2, 28))
+
+    def test_calcula_vencimento_por_emissao_e_duracao(self):
+        p = self._arquivo("Cliente;Tipo;Emissão;Duração\n"
+                          "ACME;e-CNPJ A1;10/01/2026;1 ano\n"
+                          "BETA;e-CPF A3;10/01/2026;2 anos\n"
+                          "GAMA;SafeID;10/01/2026;3 meses\n")
+        r = R.importar(p)
+        self.assertEqual(r["novas"], 3)
+        self.assertEqual(r["avisos"], 0)
+        rows = R.db().execute("SELECT cliente, vencimento FROM renovacoes ORDER BY cliente").fetchall()
+        self.assertEqual([(x["cliente"], x["vencimento"]) for x in rows],
+                         [("ACME", "2027-01-10"), ("BETA", "2028-01-10"),
+                          ("GAMA", "2026-04-10")])
+
+    def test_validade_como_duracao(self):
+        p = self._arquivo("Cliente;Tipo;Emissão;Validade\nACME;e-CNPJ A3;10/01/2026;3 anos\n")
+        r = R.importar(p)
+        self.assertEqual(r["novas"], 1)
+        self.assertEqual(R.db().execute("SELECT vencimento FROM renovacoes").fetchone()[0], "2029-01-10")
+
+    def test_avisa_vencimento_incompativel(self):
+        p = self._arquivo("Cliente;Tipo;Emissão;Vencimento\nACME;e-CNPJ A1;10/01/2026;10/01/2028\n")
+        r = R.importar(p)
+        self.assertEqual(r["novas"], 1)
+        self.assertEqual(r["avisos"], 1)
+        self.assertIn("não confere", r["detalhes"][0])
+
     def test_reimportar_atualiza_e_preserva_status(self):
         p1 = self._arquivo("Cliente,Vencimento,E-mail\nACME,31/12/2026,velho@b.com\n")
         R.importar(p1)

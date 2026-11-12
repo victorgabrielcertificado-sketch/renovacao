@@ -870,7 +870,7 @@ async function importar(env, url, body) {
     throw new HttpError(400, "use .xlsx, .xls ou .csv");
   }
   const { lerLinhas } = await import("./import.js");
-  const { linhas, ignoradas } = lerLinhas(body, nome);
+  const { linhas, ignoradas, avisos, detalhes } = lerLinhas(body, nome);
   let novas = 0;
   let atualizadas = 0;
   let ignoradasTotal = ignoradas;
@@ -914,7 +914,7 @@ async function importar(env, url, body) {
       }
     }
   }
-  return json({ novas, atualizadas, ignoradas: ignoradasTotal });
+  return json({ novas, atualizadas, ignoradas: ignoradasTotal, avisos, detalhes });
 }
 
 async function salvarConfig(env, d) {

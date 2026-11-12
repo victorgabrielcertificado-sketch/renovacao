@@ -39,6 +39,20 @@ python renovacao.py exportar relatorio.xlsx
 python renovacao.py serve                 # painel em http://localhost:8000
 ```
 
+## Regras de validade dos certificados
+
+| Tipo | Duração permitida |
+|---|---|
+| A1 | 1 ano (12 meses) |
+| A3 | 1, 2 ou 3 anos (12, 24 ou 36 meses) |
+| SafeID | 3 meses ou 1 ano (3 ou 12 meses) |
+
+A planilha pode trazer a data de **Vencimento** ou, no lugar dela, **Emissão** + **Duração**.
+Quando só há emissão e duração, o sistema calcula o vencimento. Quando as duas datas vêm
+preenchidas, ele confere a regra e mostra um aviso (sem bloquear a importação) se não bater.
+A duração aceita textos como `3 meses`, `1 ano` e `2 anos`; em colunas numéricas, A3 `1/2/3`
+é interpretado como anos e SafeID `1` = 1 ano, `3` = 3 meses.
+
 ## Configuração (variáveis de ambiente)
 
 Sem elas, e-mail e Kommo rodam em **modo simulação** (só imprimem no console).
@@ -117,8 +131,8 @@ cd cloudflare
 npm install
 npm run db:local && npm run db:seed
 npm run dev          # http://127.0.0.1:8788
-npm test             # 8 testes unitários
-npm run test:api     # 22 verificações de integração
+npm test             # 12 testes unitários
+npm run test:api     # 23 verificações de integração
 ```
 
 Deploy resumido (detalhes em [`cloudflare/README.md`](cloudflare/README.md)):
@@ -156,7 +170,7 @@ Status: `a_vencer → email_enviado → whatsapp_enviado → agendado → emitid
 python testes.py -v
 ```
 
-27 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos), régua
+31 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade), régua
 (limiares, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook e login por certificado
 (certificado válido, vencido, inativo, operador × admin, cadastro PEM e DER).
 
