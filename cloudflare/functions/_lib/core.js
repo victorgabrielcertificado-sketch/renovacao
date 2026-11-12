@@ -2,8 +2,10 @@
 // Porta fiel das regras do renovacao.py (régua, métricas, Kommo, usuários).
 
 export const STATUS = ["a_vencer", "email_enviado", "whatsapp_enviado", "agendado", "emitido", "pago", "perdido"];
-export const REGUA = [60, 30, 15, 7, 1, -3]; // dias antes/depois do vencimento
-const LIMITE_ATRASO = 30;
+export const REGUA = [60, 30, 15, 7, 1, -3]; // limiares do WhatsApp (dias antes/depois do vencimento)
+const LIMITE_ATRASO = 30; // WhatsApp não notifica quem venceu há mais de X dias
+const EMAIL_INICIO = 30; // primeiro e-mail de vencimento: 30 dias antes
+const EMAIL_INTERVALO = 7; // repete o e-mail a cada 7 dias até concluir a renovação
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_UPLOAD = 20 * 1024 * 1024;
@@ -292,62 +294,66 @@ async function enviarWhatsapp(env, K, r, dias) {
 async function regua(env, K, hoje = todayISO(env)) {
   const linhas = await all(
     env,
-    "SELECT * FROM renovacoes WHERE status IN ('a_vencer','email_enviado','whatsapp_enviado') ORDER BY vencimento",
+    "SELECT * FROM renovacoes WHERE status NOT IN ('emitido','pago','perdido') ORDER BY vencimento",
   );
   let n = 0;
   for (const r of linhas) {
     const dias = diffDays(r.vencimento, hoje);
-    if (dias === null || dias < -LIMITE_ATRASO) continue;
-
-    // menor limiar ainda não ultrapassado (REGUA é decrescente)
-    let alvo = null;
-    for (const d of REGUA) if (dias <= d) alvo = d;
-    if (alvo === null) continue;
-
-    const ultima = r.regua_ultima === null || r.regua_ultima === undefined ? 1e6 : Number(r.regua_ultima);
-    if (alvo >= ultima) continue;
-
-    const rotulo = `D${alvo >= 0 ? "+" : ""}${alvo}`;
-    const temEmail = Boolean(r.email && EMAIL_RE.test(String(r.email).trim()));
-    const temFone = String(r.telefone || "").replace(/\D/g, "").length >= 10 && alvo <= 15;
-
-    if (!temEmail && !temFone) {
-      await log(env, r.id, "regua", "sistema", "ignorado", "sem contato válido");
-      await run(env, "UPDATE renovacoes SET regua_ultima=? WHERE id=?", alvo, r.id);
-      continue;
-    }
-
-    let transitorio = false;
-    let enviados = 0;
-    if (temEmail) {
-      const [enviado, permanente] = await enviarEmail(env, r, dias);
-      if (enviado) {
-        await log(env, r.id, "email", "email", "enviado", `régua ${rotulo} (faltam ${dias} dias)`);
-        enviados++;
-      } else if (!permanente) {
-        transitorio = true;
-        await log(env, r.id, "email", "email", "falhou", "erro temporário no envio");
-      }
-    }
+    if (dias === null) continue;
 
     let novo = r.status;
-    if (temFone) {
-      if (await enviarWhatsapp(env, K, r, dias)) {
-        await log(env, r.id, "whatsapp", "whatsapp", "enviado", `régua ${rotulo} (faltam ${dias} dias)`);
-        enviados++;
-        novo = "whatsapp_enviado";
-      } else {
-        transitorio = true;
-        await log(env, r.id, "whatsapp", "whatsapp", "falhou", "erro no envio");
+    let notificou = false;
+
+    // E-mail: aviso a partir de D30 e repetição a cada 7 dias, até concluir.
+    const temEmail = Boolean(r.email && EMAIL_RE.test(String(r.email).trim()));
+    if (temEmail && dias <= EMAIL_INICIO) {
+      const ultimo = r.ultimo_email ? String(r.ultimo_email).slice(0, 10) : null;
+      const desde = ultimo ? diffDays(hoje, ultimo) : null;
+      if (ultimo === null || desde === null || desde >= EMAIL_INTERVALO) {
+        const [enviado, permanente] = await enviarEmail(env, r, dias);
+        if (enviado) {
+          await log(env, r.id, "email", "email", "enviado", `aviso de vencimento (${quandoTexto(dias)})`);
+          await run(env, "UPDATE renovacoes SET ultimo_email=? WHERE id=?", hoje, r.id);
+          notificou = true;
+          if (novo === "a_vencer") novo = "email_enviado";
+        } else if (!permanente) {
+          await log(env, r.id, "email", "email", "falhou", "erro temporário no envio");
+        }
       }
     }
 
-    if (transitorio) continue; // tenta de novo no próximo ciclo
-    await run(env, "UPDATE renovacoes SET regua_ultima=? WHERE id=?", alvo, r.id);
-    if (enviados && STATUS.indexOf(novo) > STATUS.indexOf(r.status)) {
+    // WhatsApp: mantém os limiares antigos (D15/D7/D1/D-3), sem repetir.
+    if (["a_vencer", "email_enviado", "whatsapp_enviado"].includes(r.status) && dias >= -LIMITE_ATRASO) {
+      // menor limiar ainda não ultrapassado (REGUA é decrescente)
+      let alvo = null;
+      for (const d of REGUA) if (dias <= d) alvo = d;
+      if (alvo !== null) {
+        const ultima = r.regua_ultima === null || r.regua_ultima === undefined ? 1e6 : Number(r.regua_ultima);
+        if (alvo < ultima) {
+          const temFone = String(r.telefone || "").replace(/\D/g, "").length >= 10 && alvo <= 15;
+          if (!temEmail && !temFone) {
+            await log(env, r.id, "regua", "sistema", "ignorado", "sem contato válido");
+            await run(env, "UPDATE renovacoes SET regua_ultima=? WHERE id=?", alvo, r.id);
+            continue;
+          }
+          if (temFone) {
+            if (await enviarWhatsapp(env, K, r, dias)) {
+              await log(env, r.id, "whatsapp", "whatsapp", "enviado", `régua D${alvo >= 0 ? "+" : ""}${alvo} (faltam ${dias} dias)`);
+              await run(env, "UPDATE renovacoes SET regua_ultima=? WHERE id=?", alvo, r.id);
+              notificou = true;
+              if (STATUS.indexOf("whatsapp_enviado") > STATUS.indexOf(novo)) novo = "whatsapp_enviado";
+            } else {
+              await log(env, r.id, "whatsapp", "whatsapp", "falhou", "erro no envio");
+            }
+          }
+        }
+      }
+    }
+
+    if (notificou && novo !== r.status) {
       await avancar(env, K, r.id, novo, "regua");
     }
-    if (enviados) n++;
+    if (notificou) n++;
   }
   return n;
 }

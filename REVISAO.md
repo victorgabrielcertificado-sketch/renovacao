@@ -5,7 +5,7 @@ Arquivos entregues nesta pasta:
 | Arquivo | O que é |
 |---|---|
 | `renovacao.py` | protótipo corrigido (mesma estrutura/comandos do original) |
-| `testes.py` | 21 testes automatizados (importação, régua, métricas, HTTP/webhook) |
+| `testes.py` | 33 testes automatizados (importação, régua, métricas, HTTP/webhook) |
 | `REVISAO.md` | este relatório |
 
 Ambiente preparado nesta máquina: **Python 3.12.10** (winget) + **pandas 3.1.1** + **openpyxl 3.1.5**.
@@ -14,7 +14,7 @@ Ambiente preparado nesta máquina: **Python 3.12.10** (winget) + **pandas 3.1.1*
 cd renovacao
 python renovacao.py demo        # gera certificados_exemplo.xlsx, importa e roda a régua
 python renovacao.py serve       # painel em http://localhost:8000
-python testes.py -v             # 21 testes
+python testes.py -v             # 33 testes
 ```
 
 > Se `python` não for reconhecido, abra um terminal novo (o winget atualiza o PATH) ou use
@@ -121,12 +121,13 @@ python testes.py -v             # 21 testes
 
 ## O que **não** mudou (de propósito)
 
-- Limiares da régua continuam fixos em `[60, 30, 15, 7, 1, -3]`; atraso máximo de 30 dias
-  (`LIMITE_ATRASO`).
+- O e-mail de vencimento começa em D30 e se repete a cada 7 dias até a renovação ser concluída
+  (`emitido`/`pago`/`perdido`). O WhatsApp continua com os limiares fixos `[60, 30, 15, 7, 1, -3]` e
+  atraso máximo de 30 dias (`LIMITE_ATRASO`).
 - WhatsApp continua sendo um **ponto de extensão** (nota no lead da Kommo), não envio real.
 - O token da Kommo continua em texto puro na tabela `config` do SQLite (protótipo). Para produção,
   use variável de ambiente ou cofre de segredos.
-- Sem migração de schema: apenas `CREATE TABLE IF NOT EXISTS` + índices.
+- O schema ganhou `renovacoes.ultimo_email` (migração leve automática no SQLite e migração D1).
 - `demo`/`exportar` escrevem arquivos no diretório atual.
 
 ## Atualização: login por certificado digital

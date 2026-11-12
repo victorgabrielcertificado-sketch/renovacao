@@ -201,21 +201,43 @@ class Regua(unittest.TestCase):
 
     def test_limiares_e_deduplicacao(self):
         casos = {
-            "D60": (self.HOJE + timedelta(days=60), 1),
-            "D59": (self.HOJE + timedelta(days=59), 1),
+            "D60": (self.HOJE + timedelta(days=60), 0),
+            "D59": (self.HOJE + timedelta(days=59), 0),
             "D30": (self.HOJE + timedelta(days=30), 1),
             "D20": (self.HOJE + timedelta(days=20), 1),
             "D7": (self.HOJE + timedelta(days=7), 1),
             "D0": (self.HOJE, 1),
             "D-1": (self.HOJE - timedelta(days=1), 1),
-            "D-31": (self.HOJE - timedelta(days=31), 0),
+            "D-31": (self.HOJE - timedelta(days=31), 1),  # e-mail continua após o vencimento
             "D90": (self.HOJE + timedelta(days=90), 0),
         }
         ids = {nome: lead(nome, venc) for nome, (venc, _) in casos.items()}
-        self.assertEqual(R.regua(self.HOJE), 7)
+        self.assertEqual(R.regua(self.HOJE), 6)
         for nome, (_, esperado) in casos.items():
             self.assertEqual(eventos(ids[nome], "email"), esperado, nome)
-        self.assertEqual(R.regua(self.HOJE), 0)   # não repete
+        self.assertEqual(R.regua(self.HOJE), 0)   # não repete no mesmo dia
+
+    def test_email_a_cada_7_dias_ate_concluir(self):
+        rid = lead("CADENCIA", self.HOJE + timedelta(days=30))
+        self.assertEqual(R.regua(self.HOJE), 1)          # D30
+        self.assertEqual(eventos(rid, "email"), 1)
+        for dia in range(11, 17):                        # D29..D24
+            R.regua(date(2026, 1, dia))
+        self.assertEqual(eventos(rid, "email"), 1)       # ainda não completou 7 dias
+        self.assertEqual(R.regua(date(2026, 1, 17)), 1)  # D23
+        self.assertEqual(eventos(rid, "email"), 2)
+        R.avancar(rid, "pago", origem="demo")
+        self.assertEqual(R.regua(date(2026, 1, 24)), 0)  # concluída: para os avisos
+        self.assertEqual(eventos(rid, "email"), 2)
+
+    def test_email_continua_agendado_e_para_em_emitido(self):
+        rid = lead("AGENDADO", self.HOJE + timedelta(days=30))
+        R.avancar(rid, "agendado", origem="demo")
+        self.assertEqual(R.regua(self.HOJE), 1)
+        self.assertEqual(eventos(rid, "email"), 1)
+        R.avancar(rid, "emitido", origem="demo")
+        self.assertEqual(R.regua(self.HOJE + timedelta(days=7)), 0)
+        self.assertEqual(eventos(rid, "email"), 1)
 
     def test_sem_contato_nao_quebra_e_marca_regua(self):
         rid = lead("SEM CONTATO", self.HOJE + timedelta(days=10), email=None, telefone=None)

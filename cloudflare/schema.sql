@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS renovacoes(
   status TEXT NOT NULL DEFAULT 'a_vencer',
   kommo_lead_id INTEGER,
   regua_ultima INTEGER,
+  ultimo_email TEXT,
   UNIQUE(cliente, tipo, vencimento)
 );
 

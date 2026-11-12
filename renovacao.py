@@ -29,8 +29,10 @@ except ImportError:
     x509 = hashes = pkcs12 = None
     _CRYPTO_OK = False
 
-REGUA = [60, 30, 15, 7, 1, -3]   # dias para o vencimento em que cada aviso dispara (negativo = vencido)
-LIMITE_ATRASO = 30               # não notifica quem venceu há mais de X dias
+REGUA = [60, 30, 15, 7, 1, -3]   # limiares do WhatsApp (negativo = vencido)
+LIMITE_ATRASO = 30               # WhatsApp não notifica quem venceu há mais de X dias
+EMAIL_INICIO = 30                # primeiro e-mail de vencimento: 30 dias antes
+EMAIL_INTERVALO = 7              # repete o e-mail a cada 7 dias até concluir a renovação
 STATUS = ["a_vencer", "email_enviado", "whatsapp_enviado", "agendado", "emitido", "pago", "perdido"]
 # Durações permitidas, em meses, por tipo de certificado.
 DURACOES = {"a1": [12], "a3": [12, 24, 36], "safeid": [3, 12]}
@@ -63,7 +65,7 @@ _regua_lock = threading.Lock()
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS renovacoes(id INTEGER PRIMARY KEY, cliente TEXT NOT NULL, email TEXT, telefone TEXT,
   tipo TEXT NOT NULL, vencimento TEXT NOT NULL, valor REAL, status TEXT NOT NULL DEFAULT 'a_vencer',
-  kommo_lead_id INTEGER, regua_ultima INTEGER,
+  kommo_lead_id INTEGER, regua_ultima INTEGER, ultimo_email TEXT,
   UNIQUE(cliente, tipo, vencimento));
 CREATE TABLE IF NOT EXISTS usuarios(id INTEGER PRIMARY KEY, nome TEXT NOT NULL, email TEXT,
   perfil TEXT NOT NULL DEFAULT 'operador', fp TEXT UNIQUE, sujeito TEXT, validade TEXT,
@@ -89,6 +91,14 @@ def db():
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA busy_timeout=30000")
         c.executescript(SCHEMA)
+        # Migração leve para bancos criados antes da coluna ultimo_email.
+        colunas = {linha[1] for linha in c.execute("PRAGMA table_info(renovacoes)")}
+        if "ultimo_email" not in colunas:
+            try:
+                c.execute("ALTER TABLE renovacoes ADD COLUMN ultimo_email TEXT")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
         _local.conn = c
     return c
 
@@ -526,59 +536,67 @@ def regua(hoje=None):
         hoje = hoje or date.today()
         n = 0
         linhas = db().execute("""SELECT * FROM renovacoes
-                                 WHERE status IN ('a_vencer','email_enviado','whatsapp_enviado')
+                                 WHERE status NOT IN ('emitido','pago','perdido')
                                  ORDER BY vencimento""").fetchall()
         for r in linhas:
             try:
                 dias = (date.fromisoformat(r["vencimento"]) - hoje).days
             except (TypeError, ValueError):
                 continue
-            if dias < -LIMITE_ATRASO:
-                continue
-            # menor limiar ainda não ultrapassado: é o aviso que está "valendo" hoje
-            alvo = min((d for d in REGUA if dias <= d), default=None)
-            if alvo is None:
-                continue
-            ultima = r["regua_ultima"] if r["regua_ultima"] is not None else 10 ** 6
-            if alvo >= ultima:
-                continue
-
-            rotulo = f"D{alvo:+d}"
-            tem_email = bool(_texto(r["email"]) and EMAIL_RE.match(r["email"]))
-            tem_fone = bool(_telefone(r["telefone"])) and alvo <= 15
-            if not tem_email and not tem_fone:
-                log(r["id"], "regua", "sistema", "ignorado", "sem contato válido")
-                db().execute("UPDATE renovacoes SET regua_ultima=? WHERE id=?", (alvo, r["id"]))
-                continue
-
-            transitorio = False
-            enviados = 0
-            if tem_email:
-                enviado, permanente = enviar_email(r, dias)
-                if enviado:
-                    log(r["id"], "email", "email", "enviado", f"régua {rotulo} (faltam {dias} dias)")
-                    enviados += 1
-                elif not permanente:
-                    transitorio = True
-                    log(r["id"], "email", "email", "falhou", "erro temporário no envio")
 
             novo = r["status"]
-            if tem_fone:
-                if enviar_whatsapp(r, dias):
-                    log(r["id"], "whatsapp", "whatsapp", "enviado", f"régua {rotulo} (faltam {dias} dias)")
-                    enviados += 1
-                    novo = "whatsapp_enviado"
-                else:
-                    transitorio = True
-                    log(r["id"], "whatsapp", "whatsapp", "falhou", "erro no envio")
+            notificou = False
 
-            if transitorio:
-                continue   # não marca regua_ultima: tenta de novo no próximo ciclo
+            # E-mail: aviso a partir de D30 e repetição a cada 7 dias, até concluir.
+            tem_email = bool(_texto(r["email"]) and EMAIL_RE.match(r["email"]))
+            if tem_email and dias <= EMAIL_INICIO:
+                ultimo = r["ultimo_email"]
+                desde = None
+                if ultimo:
+                    try:
+                        desde = (hoje - date.fromisoformat(str(ultimo)[:10])).days
+                    except ValueError:
+                        desde = None
+                if ultimo is None or desde is None or desde >= EMAIL_INTERVALO:
+                    enviado, permanente = enviar_email(r, dias)
+                    if enviado:
+                        log(r["id"], "email", "email", "enviado",
+                            f"aviso de vencimento ({_quando(dias)})")
+                        db().execute("UPDATE renovacoes SET ultimo_email=? WHERE id=?",
+                                     (hoje.isoformat(), r["id"]))
+                        notificou = True
+                        if novo == "a_vencer":
+                            novo = "email_enviado"
+                    elif not permanente:
+                        log(r["id"], "email", "email", "falhou", "erro temporário no envio")
 
-            db().execute("UPDATE renovacoes SET regua_ultima=? WHERE id=?", (alvo, r["id"]))
-            if enviados and STATUS.index(novo) > STATUS.index(r["status"]):
+            # WhatsApp: mantém os limiares antigos (D15/D7/D1/D-3), sem repetir.
+            if r["status"] in ("a_vencer", "email_enviado", "whatsapp_enviado") and dias >= -LIMITE_ATRASO:
+                alvo = min((d for d in REGUA if dias <= d), default=None)
+                if alvo is not None:
+                    ultima = r["regua_ultima"] if r["regua_ultima"] is not None else 10 ** 6
+                    if alvo < ultima:
+                        tem_fone = bool(_telefone(r["telefone"])) and alvo <= 15
+                        if not tem_email and not tem_fone:
+                            log(r["id"], "regua", "sistema", "ignorado", "sem contato válido")
+                            db().execute("UPDATE renovacoes SET regua_ultima=? WHERE id=?",
+                                         (alvo, r["id"]))
+                            continue
+                        if tem_fone:
+                            if enviar_whatsapp(r, dias):
+                                log(r["id"], "whatsapp", "whatsapp", "enviado",
+                                    f"régua D{alvo:+d} (faltam {dias} dias)")
+                                db().execute("UPDATE renovacoes SET regua_ultima=? WHERE id=?",
+                                             (alvo, r["id"]))
+                                notificou = True
+                                if STATUS.index("whatsapp_enviado") > STATUS.index(novo):
+                                    novo = "whatsapp_enviado"
+                            else:
+                                log(r["id"], "whatsapp", "whatsapp", "falhou", "erro no envio")
+
+            if notificou and novo != r["status"]:
                 avancar(r["id"], novo, "regua")
-            if enviados:
+            if notificou:
                 n += 1
         print(f"régua: {n} renovações notificadas")
         return n
@@ -749,7 +767,7 @@ async function hist(id){
 }
 async function abrir(id){aberto=id;await render()}
 async function mudar(id,status){try{await post("/api/avancar",{id,status});toast("Status atualizado: "+NM[status]);await render()}catch(e){toast("Falha ao atualizar: "+e.message)}}
-async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: a régua não repete envios.");await render()}catch(e){toast("Falha na régua: "+e.message)}}
+async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: nada venceu ou o intervalo de 7 dias ainda não foi atingido.");await render()}catch(e){toast("Falha na régua: "+e.message)}}
 async function cfgLoad(){
  try{
   const c=await j("/api/config");el("cu").value=c.url||"";el("cp").value=c.pipeline||"";el("ct").value="";
@@ -1112,7 +1130,7 @@ def servir():
         if not os.getenv("PROXY_SECRET"):
             print("[aviso] AUTH_CERT=1 sem PROXY_SECRET: o cabeçalho X-Client-Cert não é confiável.")
 
-    def ciclo():   # régua automática a cada 6h (idempotente: não repete avisos)
+    def ciclo():   # régua automática a cada 6h (e-mail repete a cada 7 dias até concluir)
         while True:
             try:
                 regua()

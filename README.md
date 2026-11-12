@@ -170,8 +170,8 @@ Status: `a_vencer → email_enviado → whatsapp_enviado → agendado → emitid
 python testes.py -v
 ```
 
-31 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade), régua
-(limiares, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook e login por certificado
+33 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade), régua
+(aviso em D30, repetição a cada 7 dias, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook e login por certificado
 (certificado válido, vencido, inativo, operador × admin, cadastro PEM e DER).
 
 ## Segurança
@@ -187,8 +187,9 @@ python testes.py -v
 ## Limitações
 
 - WhatsApp é um ponto de extensão (nota no lead), não um envio real.
-- Limiares da régua fixos em `[60, 30, 15, 7, 1, -3]` e atraso máximo de 30 dias.
-- Protótipo de arquivo único, sem migrações de schema.
+- E-mail de vencimento começa em D30 e se repete a cada 7 dias até a renovação ser concluída
+  (`emitido`/`pago`/`perdido`); WhatsApp mantém os limiares `[60, 30, 15, 7, 1, -3]` e o atraso máximo de 30 dias.
+- Migração leve automática para adicionar `ultimo_email` em bancos SQLite antigos.
 
 ## Estrutura
 

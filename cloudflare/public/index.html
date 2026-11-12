@@ -91,7 +91,7 @@ async function hist(id){
 }
 async function abrir(id){aberto=id;await render()}
 async function mudar(id,status){try{await post("/api/avancar",{id,status});toast("Status atualizado: "+NM[status]);await render()}catch(e){toast("Falha ao atualizar: "+e.message)}}
-async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: a régua não repete envios.");await render()}catch(e){toast("Falha na régua: "+e.message)}}
+async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: nada venceu ou o intervalo de 7 dias ainda não foi atingido.");await render()}catch(e){toast("Falha na régua: "+e.message)}}
 async function cfgLoad(){
  try{
   const c=await j("/api/config");el("cu").value=c.url||"";el("cp").value=c.pipeline||"";el("ct").value="";

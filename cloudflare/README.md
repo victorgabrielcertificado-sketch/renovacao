@@ -15,7 +15,8 @@ para rodar em servidor/VPS; esta é a versão serverless.
 | Login básico + certificado via nginx | formulário com cookie + Basic + **Cloudflare Access** + certificado via cabeçalho |
 | Upload de `.pfx`/`.p12` | somente `.cer`/`.crt`/`.pem`/`.der` |
 
-Tudo o mais é igual: régua D60/D30/D15/D7/D1/D-3, métricas, histórico, importação de planilha,
+Tudo o mais é igual: e-mail de vencimento a partir de D30 e repetido a cada 7 dias até a renovação ser
+concluída, WhatsApp nos limiares D60/D30/D15/D7/D1/D-3, métricas, histórico, importação de planilha,
 Kommo (leads, etapas e notas) e perfis `admin`/`operador`.
 
 ## Estrutura
@@ -88,7 +89,12 @@ Copie o `database_id` retornado para `wrangler.toml` (substitua o `00000000-...`
 npx wrangler d1 execute renovacao --remote --file=schema.sql
 # Se o banco já existia antes da versão com senha individual:
 npx wrangler d1 execute renovacao --remote --file=migrations/2026-11-11-senha-usuarios.sql
+# Se o banco já existia antes do aviso de e-mail em D30:
+npx wrangler d1 execute renovacao --remote --file=migrations/2026-11-12-ultimo-email.sql
 ```
+
+> Se `--file` falhar com `Authentication error [code: 10000]`, aplique a migração com `--command`
+> (ex.: `npx wrangler d1 execute renovacao --remote --command "ALTER TABLE renovacoes ADD COLUMN ultimo_email TEXT;"`).
 
 ### 2. Criar o projeto Pages
 
@@ -354,7 +360,8 @@ export default {
 };
 ```
 
-A régua é idempotente: cada limiar (D60, D30, D15, D7, D1, D-3) dispara uma vez por renovação.
+A régua é idempotente: o e-mail começa em D30 e se repete a cada 7 dias até a renovação ser concluída
+(`emitido`/`pago`/`perdido`); o WhatsApp dispara uma vez em cada limiar antigo (D60, D30, D15, D7, D1, D-3).
 
 ## E-mail
 
