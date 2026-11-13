@@ -187,10 +187,50 @@ async function main() {
     assert.equal(r.json.fonte, "access");
   });
 
-  await passo("operador não acessa administração", async () => {
+  await passo("operador importa e configura a Kommo, mas não acessa usuários", async () => {
     assert.equal((await req("/api/usuarios", { headers: ACCESS_OP })).status, 403);
-    assert.equal((await req("/api/config", { headers: ACCESS_OP })).status, 403);
+    assert.equal((await req("/api/config", { headers: ACCESS_OP })).status, 200);
     assert.equal((await req("/api/renovacoes", { headers: ACCESS_OP })).status, 200);
+
+    const cfg = await req("/api/config", {
+      method: "POST",
+      headers: { ...ACCESS_OP, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://teste.kommo.com", pipeline: "123", etapas: { agendado: 777 } }),
+    });
+    assert.equal(cfg.status, 200);
+
+    const csv = "Cliente;Vencimento\nImportada Operador;15/02/2027\n";
+    const imp = await req("/api/importar?nome=op.csv", {
+      method: "POST",
+      headers: { ...ACCESS_OP, ...H },
+      body: csv,
+    });
+    assert.equal(imp.status, 200);
+    assert.equal(imp.json.novas, 1);
+  });
+
+  await passo("criar renovação pelo painel", async () => {
+    const r = await req("/api/renovacoes", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ cliente: "Nova API", tipo: "e-CNPJ A1", vencimento: "2027-01-15" }),
+    });
+    assert.equal(r.status, 201);
+    assert.ok(r.json.id);
+
+    const dup = await req("/api/renovacoes", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ cliente: "Nova API", tipo: "e-CNPJ A1", vencimento: "2027-01-15" }),
+    });
+    assert.equal(dup.status, 409);
+
+    const ruim = await req("/api/renovacoes", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ cliente: "", tipo: "e-CNPJ A1", vencimento: "2027-01-15" }),
+    });
+    assert.equal(ruim.status, 400);
   });
 
   await passo("métricas e lista do mês", async () => {

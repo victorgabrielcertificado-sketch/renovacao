@@ -160,6 +160,10 @@ O painel exige sessão. O formulário troca usuário/senha por um **cookie de se
 - **Admin de emergência:** `PAINEL_USER` + `PAINEL_SENHA` (também aceito no Basic Auth).
 - **Usuários individuais:** cadastrados na aba **Usuários** com nome, e-mail, perfil e senha.
   O login aceita o **nome** ou o **e-mail** cadastrado.
+- **Perfis:** `admin` vê todas as abas; `operador` vê **Renovações** e **Configurações**
+  (importação de planilha e integração Kommo), mas a aba **Usuários** é exclusiva de `admin`.
+- **Tema:** em **Configurações → Aparência** o usuário escolhe **Automático**, **Claro** ou
+  **Escuro**; a preferência fica salva no navegador (`localStorage`).
 - As senhas são gravadas como hash **PBKDF2-SHA256 com salt**; nunca em texto puro.
 - O admin pode redefinir a senha de qualquer usuário pelo botão **Senha** na lista.
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).

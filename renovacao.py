@@ -678,45 +678,153 @@ def cert_info(c):
 
 # ---------- Painel web + webhook ----------
 HTML = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>Renovação de certificados</title>
+<script>try{var _t=localStorage.getItem("tema");if(_t==="light"||_t==="dark"){document.documentElement.dataset.theme=_t;document.documentElement.style.colorScheme=_t}}catch(e){}</script>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#f4f6f8;--sf:#fff;--tx:#14263a;--mu:#5d6b7a;--ln:#dce2e8;--ac:#0f6f73;--ac2:#e3f1f1}
+:root{--bg:#f4f6f8;--sf:#fff;--tx:#14263a;--mu:#5d6b7a;--ln:#dce2e8;--ac:#0f6f73;--ac2:#e3f1f1;--red:#b4432f;--orange:#d6a01e;--green:#2d7d4e;--blue:#6a8fc2;--teal:#2e9c8e;--purple:#8f6cc0}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}}
 :root[data-theme="dark"]{--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}
-*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-header{background:var(--sf);border-bottom:1px solid var(--ln);padding:14px 20px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}header h1{font-size:16px;font-weight:800;margin:0 auto 0 0}
-nav button{background:none;border:0;font:inherit;font-weight:600;color:var(--mu);padding:6px 2px;margin-left:16px;cursor:pointer;border-bottom:2px solid transparent}nav button[aria-current="true"]{color:var(--tx);border-color:var(--ac)}
-main{max-width:1080px;margin:0 auto;padding:20px}.topo{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}.topo h2{font-size:34px;font-weight:800;letter-spacing:-.02em;margin:0 auto 0 0}
-button.b{font:inherit;font-weight:600;background:var(--sf);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:7px 12px;cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+.app{display:flex;min-height:100vh}
+.side{width:236px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--ln);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid var(--ln)}
+.logo{width:34px;height:34px;flex-shrink:0}
+.brand-txt{font-size:11px;font-weight:800;letter-spacing:.03em;line-height:1.3;text-transform:uppercase}
+.menu{display:flex;flex-direction:column;gap:2px;padding:12px 8px;flex:1;overflow-y:auto}
+.mi{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;font:inherit;font-weight:600;color:var(--mu);padding:9px 12px;border-radius:8px;cursor:pointer;text-align:left}
+.mi:hover{background:var(--ac2);color:var(--tx)}
+.mi[aria-current="true"]{background:var(--ac2);color:var(--tx);font-weight:700}
+.mi .ic{width:18px;text-align:center;font-size:15px;flex-shrink:0}
+.side-foot{padding:12px;border-top:1px solid var(--ln);font-size:12px;color:var(--mu)}
+.side-foot .mi{color:var(--tx);padding:6px 0}
+.wrap{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{background:var(--sf);border-bottom:1px solid var(--ln);padding:14px 24px;display:flex;align-items:center;gap:16px}
+.top h1{font-size:16px;font-weight:800;margin:0 auto 0 0}
+.bell{width:38px;height:38px;border-radius:50%;border:1px solid var(--ln);background:var(--sf);font-size:17px;cursor:pointer;display:grid;place-items:center}
+.bell:hover{background:var(--ac2)}
+main{padding:24px;width:100%;max-width:1440px;margin:0 auto}
+h2{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0 0 18px}
+h3{font-size:16px;margin:0 0 12px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.card{background:var(--sf);border:1px solid var(--ln);border-radius:12px;padding:16px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card .lbl{font-size:12px;color:var(--mu);font-weight:600;line-height:1.3}
+.card .num{font-size:28px;font-weight:800;line-height:1.1}
+.card .ic{font-size:22px;opacity:.65}
+.card.red .num{color:var(--red)}.card.orange .num{color:var(--orange)}.card.green .num{color:var(--green)}
+.dash{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+.panel{background:var(--sf);border:1px solid var(--ln);border-radius:12px;padding:16px;min-width:0}
+.panel-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.panel-head h3{margin:0 auto 0 0}
+.cx{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:640px}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--ln);white-space:nowrap;vertical-align:middle}
+th{font-size:12px;color:var(--mu);font-weight:600}tr:last-child td{border-bottom:0}tbody tr{cursor:pointer}tbody tr:hover{background:var(--bg)}tr.sel td{background:var(--ac2)}
+.progress{display:flex;flex-direction:column;gap:4px;min-width:130px}
+.progress .plabel{font-size:12px;color:var(--mu)}
+.progress .track{height:6px;border-radius:3px;background:var(--ln);overflow:hidden}
+.progress .fill{display:block;height:100%;border-radius:3px}
+.detail{background:var(--sf);border:1px solid var(--ln);border-radius:12px;padding:16px;position:sticky;top:80px}
+.detail h3{margin:0 0 14px;font-size:15px}
+.steps{list-style:none;margin:0 0 16px;padding:0}
+.steps li{display:flex;gap:12px;position:relative;padding-bottom:18px}
+.steps li:last-child{padding-bottom:0}
+.steps li::before{content:"";position:absolute;left:11px;top:24px;bottom:0;width:2px;background:var(--ln)}
+.steps li:last-child::before{display:none}
+.steps .dot{width:24px;height:24px;border-radius:50%;background:var(--ln);color:var(--mu);display:grid;place-items:center;font-size:12px;font-weight:700;flex-shrink:0}
+.steps li.done .dot{background:var(--ac);color:#fff}
+.steps li.active .dot{background:var(--ac);color:#fff;box-shadow:0 0 0 4px var(--ac2)}
+.steps .st{font-size:14px;font-weight:600}
+.steps .sd{font-size:12px;color:var(--mu)}
+.info{display:grid;gap:6px;font-size:13px;margin-bottom:12px}
+.info div{display:flex;justify-content:space-between;gap:10px}
+.info span{color:var(--mu)}
+.hist{margin:0;padding:0;list-style:none;font-size:12px;max-height:180px;overflow-y:auto}
+.hist li{padding:5px 0;border-bottom:1px dashed var(--ln)}
+.hist li:last-child{border:0}
+.hist time{color:var(--mu);margin-right:8px}
+button.b{font:inherit;font-weight:600;background:var(--sf);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:7px 12px;cursor:pointer}
+button.b:hover{background:var(--bg)}
+button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button.p{color:#0b1a1c}}
+button.sm{padding:4px 9px;font-size:12px;border-radius:6px}
 button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
-.nums{display:flex;gap:28px;flex-wrap:wrap;margin:10px 0 14px}.nums div{font-size:13px;color:var(--mu)}.nums b{display:block;font-size:26px;color:var(--tx);font-weight:800;line-height:1.1}
-.fita{display:flex;height:26px;border-radius:6px;overflow:hidden;background:var(--ln)}.fita i{display:block;min-width:3px}
-.leg{display:flex;gap:6px 16px;flex-wrap:wrap;margin:10px 0 20px;font-size:13px}.leg span{display:flex;align-items:center;gap:6px}.leg u{width:10px;height:10px;border-radius:3px;display:inline-block}
-.cx{background:var(--sf);border:1px solid var(--ln);border-radius:10px;overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:640px}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--ln);white-space:nowrap}
-th{font-size:12px;color:var(--mu);font-weight:600}tr:last-child td{border-bottom:0}tr.sel td{background:var(--ac2)}
-select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}.lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
-h3{font-size:15px;margin:24px 0 8px}.hist{margin:0;padding:12px 16px;list-style:none;font-size:13px}.hist li{padding:4px 0;border-bottom:1px dashed var(--ln)}.hist li:last-child{border:0}.hist time{color:var(--mu);margin-right:10px}
-.bar{display:inline-block;height:8px;border-radius:4px;background:var(--ac);vertical-align:middle;margin-right:8px}
+select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}
+.lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
 .cfg label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}.cfg input,.cfg select{display:block;margin-top:4px;width:min(420px,100%)}.et{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin:8px 0 14px}.et label{margin:0}
-#msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:5}#msg.on{opacity:1}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;z-index:20;padding:20px}
+.modal-card{background:var(--sf);border-radius:14px;padding:20px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto}
+.modal-card label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}
+.modal-card input,.modal-card select{display:block;margin-top:4px;width:100%}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+#msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}#msg.on{opacity:1}
+@media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.dash{grid-template-columns:1fr}.detail{position:static}}
+@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}}
 </style></head><body>
-<header><h1>Renovação de certificados</h1><nav><button id="n1" onclick="aba(1)" aria-current="true">Renovações do mês</button><button id="n2" onclick="aba(2)" aria-current="false">Configurações</button><button id="n3" onclick="aba(3)" aria-current="false" hidden>Usuários</button></nav></header>
-<main><section id="s1">
-<div class="topo"><h2 id="tit"></h2><button class="b" onclick="nav(-1)" aria-label="Mês anterior">◀</button><button class="b" onclick="nav(1)" aria-label="Próximo mês">▶</button><button class="b p" onclick="regua()">Rodar régua agora</button></div>
-<div class="nums" id="nums"></div><div class="fita" id="fita" aria-hidden="true"></div><div class="leg" id="leg"></div>
-<div class="cx"><table id="tab"></table></div>
-<h3>Histórico do lead</h3><div class="cx"><ul class="hist" id="hst"><li>Clique em “Histórico” em uma linha da tabela.</li></ul></div>
-<h3>Taxa de renovação por mês de vencimento</h3><div class="cx"><table id="meses"></table></div></section>
-<section id="s2" hidden class="cfg"><h3>Dados</h3>
+<div class="app">
+<aside class="side">
+ <div class="brand">
+  <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5l8-3z" fill="#0f6f73"/><path d="M8.5 12l2.5 2.5 4.5-4.5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="brand-txt">Sistema de<br>Renovação de<br>Certificados</div>
+ </div>
+ <nav class="menu">
+  <button id="m1" class="mi" onclick="aba(1)" aria-current="true"><span class="ic">▦</span>Painel Geral</button>
+  <button id="m2" class="mi" onclick="aba(2)" aria-current="false"><span class="ic">▤</span>Certificados Ativos</button>
+  <button id="m3" class="mi" onclick="aba(3)" aria-current="false"><span class="ic">☰</span>Fila de Renovação</button>
+  <button id="m4" class="mi" onclick="aba(4)" aria-current="false"><span class="ic">↺</span>Histórico</button>
+  <button id="m5" class="mi" onclick="aba(5)" aria-current="false"><span class="ic">⚙</span>Configurações</button>
+  <!--USUARIOS_NAV_INICIO--><button id="m6" class="mi" onclick="aba(6)" aria-current="false" hidden><span class="ic">👥</span>Usuários</button><!--USUARIOS_NAV_FIM-->
+ </nav>
+ <div class="side-foot"><span id="eu"></span></div>
+</aside>
+<div class="wrap">
+<header class="top"><h1>Renovação de certificados</h1><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button></header>
+<main>
+<section id="s1">
+ <h2>Processo de Renovação de Certificados</h2>
+ <div class="cards">
+  <div class="card red"><div><div class="lbl">Vencidos</div><div class="num" id="c-vencidos">0</div></div><div class="ic">⚠️</div></div>
+  <div class="card orange"><div><div class="lbl">A Vencer - Aguardando em 30 dias</div><div class="num" id="c-vencer">0</div></div><div class="ic">⏳</div></div>
+  <div class="card orange"><div><div class="lbl">Em Renovação</div><div class="num" id="c-renovacao">0</div></div><div class="ic">🔄</div></div>
+  <div class="card green"><div><div class="lbl">Renovados este mês</div><div class="num" id="c-renovados">0</div></div><div class="ic">✅</div></div>
+ </div>
+ <div class="dash">
+  <div class="panel">
+   <div class="panel-head"><h3>Renovações pendentes</h3><button class="b p" onclick="novo()">Iniciar Renovação</button></div>
+   <div class="cx"><table id="tab"></table></div>
+  </div>
+  <aside class="detail" id="detalhe">
+   <h3 id="d-tit">Selecione uma renovação</h3>
+   <ol class="steps" id="steps"></ol>
+   <div class="info" id="d-info"></div>
+   <h3 style="margin-top:14px">Histórico</h3>
+   <ul class="hist" id="d-hist"></ul>
+  </aside>
+ </div>
+</section>
+<section id="s2" hidden>
+ <h2>Certificados Ativos</h2>
+ <div class="panel"><div class="cx"><table id="tab-ativos"></table></div></div>
+</section>
+<section id="s3" hidden>
+ <h2>Fila de Renovação</h2>
+ <div class="panel"><div class="cx"><table id="tab-fila"></table></div></div>
+</section>
+<section id="s4" hidden>
+ <h2>Histórico</h2>
+ <div class="panel"><div class="cx"><table id="tab-hist"></table></div></div>
+</section>
+<section id="s5" hidden class="cfg"><h2>Configurações</h2>
+<h3>Aparência</h3>
+<label>Tema<select id="tema" onchange="aplicarTema(this.value)"><option value="auto">Automático (sistema)</option><option value="light">Claro</option><option value="dark">Escuro</option></select></label>
+<p style="font-size:13px;color:var(--mu)">A escolha fica salva neste navegador.</p>
+<h3>Dados</h3>
 <input type="file" id="arq" aria-label="Planilha" accept=".xlsx,.xls,.csv"> <button class="b" onclick="imp()">Importar planilha</button>
 <h3>Integração com a Kommo</h3>
 <label>URL da conta<input id="cu" placeholder="https://suaconta.kommo.com" inputmode="url"></label><label>Token de longa duração<input id="ct" type="password" autocomplete="off"></label><label>ID do funil<input id="cp" inputmode="numeric"></label>
 <p style="font-size:13px;color:var(--mu)">ID da etapa no Kommo para cada status:</p><div class="et" id="ce"></div>
 <button class="b p" onclick="salvar()">Salvar</button> <button class="b" onclick="testar()">Testar conexão</button> <button class="b" onclick="limparToken()">Limpar token</button>
 <p style="font-size:13px;color:var(--mu)">Webhook para cadastrar na Kommo (mudança de etapa): <code id="wh"></code> (acrescente <code>?t=SEU_WEBHOOK_TOKEN</code> se definiu essa variável)</p></section>
-<section id="s3" hidden class="cfg"><h3>Usuários e certificados</h3>
-<p id="eu" style="font-size:13px;color:var(--mu)"></p>
+<!--USUARIOS_SECAO_INICIO--><section id="s6" hidden class="cfg"><h2>Usuários e certificados</h2>
 <div class="cx"><table id="usrs"></table></div>
 <h3>Cadastrar certificado</h3>
 <label>Nome<input id="un" autocomplete="off"></label>
@@ -725,51 +833,57 @@ h3{font-size:15px;margin:24px 0 8px}.hist{margin:0;padding:12px 16px;list-style:
 <label>Certificado (.cer/.crt/.pem/.pfx)<input type="file" id="uf" accept=".cer,.crt,.pem,.pfx,.p12"></label>
 <label>Senha do .pfx (se houver)<input id="us" type="password" autocomplete="off"></label>
 <button class="b p" onclick="cadastrarCert()">Cadastrar</button>
-<p style="font-size:13px;color:var(--mu)">O login por certificado exige <code>AUTH_CERT=1</code>, <code>PROXY_SECRET</code> e o proxy repassando <code>X-Client-Cert</code> (PEM urlencoded). A chave privada do .pfx é descartada; só a parte pública é guardada.</p></section></main>
+<p style="font-size:13px;color:var(--mu)">O login por certificado exige <code>AUTH_CERT=1</code>, <code>PROXY_SECRET</code> e o proxy repassando <code>X-Client-Cert</code> (PEM urlencoded). A chave privada do .pfx é descartada; só a parte pública é guardada.</p></section><!--USUARIOS_SECAO_FIM-->
+</main>
+</div>
+</div>
+<div class="modal" id="modal" hidden>
+ <div class="modal-card">
+  <h3>Nova renovação</h3>
+  <label>Cliente / Titular<input id="nv-cliente" autocomplete="off"></label>
+  <label>Tipo<select id="nv-tipo"><option value="e-CNPJ A1">e-CNPJ A1</option><option value="e-CNPJ A3">e-CNPJ A3</option><option value="e-CPF A1">e-CPF A1</option><option value="e-CPF A3">e-CPF A3</option><option value="SSL">SSL</option><option value="SafeID">SafeID</option></select></label>
+  <label>Vencimento<input id="nv-venc" type="date"></label>
+  <label>Valor<input id="nv-valor" inputmode="decimal"></label>
+  <label>E-mail<input id="nv-email" type="email" autocomplete="off"></label>
+  <label>Telefone<input id="nv-tel" autocomplete="off"></label>
+  <div class="modal-actions"><button class="b p" onclick="salvarNovo()">Salvar</button><button class="b" onclick="fecharModal()">Cancelar</button></div>
+ </div>
+</div>
 <div id="msg" role="status" aria-live="polite"></div>
 <script>
 const ST=[["a_vencer","A vencer","#8f9aa7"],["email_enviado","E-mail enviado","#6a8fc2"],["whatsapp_enviado","WhatsApp enviado","#2e9c8e"],["agendado","Agendado","#d6a01e"],["emitido","Emitido","#8f6cc0"],["pago","Pago","#2d7d4e"],["perdido","Perdido","#b4432f"]];
 const NM=Object.fromEntries(ST.map(s=>[s[0],s[1]]));
-const MN=["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
-const mesNome=i=>MN[i][0].toUpperCase()+MN[i].slice(1);
+const PROG={a_vencer:{l:"Aguardando",p:20,c:"#8f9aa7"},email_enviado:{l:"Assinatura Pendente",p:40,c:"#6a8fc2"},whatsapp_enviado:{l:"Aprovação",p:60,c:"#2e9c8e"},agendado:{l:"Em Renovação",p:80,c:"#d6a01e"},emitido:{l:"Emitido",p:100,c:"#8f6cc0"},pago:{l:"Pago",p:100,c:"#2d7d4e"},perdido:{l:"Perdido",p:0,c:"#b4432f"}};
 const el=id=>document.getElementById(id);
+function temaSalvo(){try{return localStorage.getItem("tema")||"auto"}catch(_){return "auto"}}
+function aplicarTema(v){const r=document.documentElement;if(v==="light"||v==="dark"){r.dataset.theme=v;r.style.colorScheme=v}else{delete r.dataset.theme;r.style.colorScheme=""}try{localStorage.setItem("tema",v)}catch(_){}const s=el("tema");if(s)s.value=v}
 const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok){let m=r.status+" "+r.statusText;try{m=(await r.json()).erro||m}catch(_){}throw new Error(m)}return r.json()};
 const post=(u,b)=>j(u,{method:"POST",headers:{"X-Requested-With":"fetch",...(b instanceof Blob?{}:{"Content-Type":"application/json"})},body:b instanceof Blob?b:JSON.stringify(b??{})});
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const br=s=>s?String(s).slice(8,10)+"/"+String(s).slice(5,7)+"/"+String(s).slice(0,4):"—";
 const moeda=v=>v==null||v===""?"—":"R$ "+Number(v).toLocaleString("pt-BR",{maximumFractionDigits:2});
-const hj=new Date();let mes=hj.getFullYear()+"-"+String(hj.getMonth()+1).padStart(2,"0"),aberto=null,LISTA=[],EU={nome:"local",perfil:"admin"};
+const hj=new Date(),pad=n=>String(n).padStart(2,"0"),hoje=hj.getFullYear()+"-"+pad(hj.getMonth()+1)+"-"+pad(hj.getDate()),mesAtual=hoje.slice(0,7);
+const d30=new Date(hj.getTime()+30*864e5),dia30=d30.getFullYear()+"-"+pad(d30.getMonth()+1)+"-"+pad(d30.getDate());
+let aberto=null,LISTA=[],EU={nome:"local",perfil:"admin"};
 function toast(t){const m=el("msg");m.textContent=t;m.classList.add("on");clearTimeout(toast.h);toast.h=setTimeout(()=>m.classList.remove("on"),2800)}
-function aba(n){el("s1").hidden=n!=1;el("s2").hidden=n!=2;el("s3").hidden=n!=3;el("n1").setAttribute("aria-current",String(n==1));el("n2").setAttribute("aria-current",String(n==2));el("n3").setAttribute("aria-current",String(n==3));if(n==2)cfgLoad();if(n==3)usuarios()}
-function nav(d){const[y,m]=mes.split("-").map(Number),t=new Date(y,m-1+d,1);mes=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0");aberto=null;render()}
-async function render(){
- try{
-  const q="?mes="+encodeURIComponent(mes),[m,L]=await Promise.all([j("/api/metricas"+q),j("/api/renovacoes"+q)]);LISTA=L;
-  const[y,mm]=mes.split("-");el("tit").textContent=mesNome(Number(mm)-1)+" de "+y;
-  el("nums").innerHTML=`<div><b>${m.total}</b>vencem no mês</div><div><b>${m.taxa_geral}%</b>renovados</div><div><b>${moeda(m.receita)}</b>recebidos</div>`;
-  el("fita").innerHTML=ST.filter(s=>m.funil[s[0]]).map(s=>`<i style="flex:${m.funil[s[0]]};background:${s[2]}" title="${s[1]}: ${m.funil[s[0]]}"></i>`).join("");
-  el("leg").innerHTML=ST.map(s=>`<span><u style="background:${s[2]}"></u>${s[1]} ${m.funil[s[0]]}</span>`).join("");
-  el("tab").innerHTML="<tr><th>Cliente</th><th>Tipo</th><th>Vencimento</th><th>Valor</th><th>Situação</th><th></th></tr>"+
-   (L.map(x=>`<tr class="${x.id==aberto?"sel":""}"><td>${esc(x.cliente)}</td><td>${esc(x.tipo)}</td><td>${br(x.vencimento)}</td><td>${moeda(x.valor)}</td><td><select aria-label="Situação de ${esc(x.cliente)}" onchange="mudar(${x.id},this.value)">${ST.map(s=>`<option value="${s[0]}" ${s[0]==x.status?"selected":""}>${s[1]}</option>`).join("")}</select></td><td><button class="lk" onclick="abrir(${x.id})">Histórico</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum certificado vence neste mês.</td></tr>");
-  el("meses").innerHTML="<tr><th>Mês</th><th>Base</th><th>Renovados</th><th>Taxa</th></tr>"+m.por_mes.filter(x=>x.grupo).map(x=>{
-   const[yy,mn]=String(x.grupo).split("-");
-   return `<tr><td>${mesNome(Number(mn)-1)} de ${yy}</td><td>${x.total}</td><td>${x.renovados}</td><td><span class="bar" style="width:${Math.min(100,Number(x.taxa))*0.9}px"></span>${x.taxa}%</td></tr>`;
-  }).join("");
-  if(aberto)await hist(aberto);
- }catch(e){toast("Falha ao carregar: "+e.message)}
-}
-async function hist(id){
- try{
-  const e=await j("/api/historico?id="+id),x=LISTA.find(o=>o.id==id);
-  el("hst").innerHTML=(x?`<li><b>${esc(x.cliente)}</b> · ${esc(x.tipo)}</li>`:"")+
-   (e.length?e.map(v=>`<li><time>${esc(String(v.ts).replace("T"," "))}</time>${esc(v.tipo)}${v.canal?" · "+esc(v.canal):""}${v.resultado?" · "+esc(v.resultado):""}${v.detalhe?" · "+esc(v.detalhe):""}</li>`).join(""):"<li>Sem eventos.</li>");
- }catch(e){toast("Falha no histórico: "+e.message)}
-}
-async function abrir(id){aberto=id;await render()}
-async function mudar(id,status){try{await post("/api/avancar",{id,status});toast("Status atualizado: "+NM[status]);await render()}catch(e){toast("Falha ao atualizar: "+e.message)}}
-async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: nada venceu ou o intervalo de 7 dias ainda não foi atingido.");await render()}catch(e){toast("Falha na régua: "+e.message)}}
+function aba(n){if(n===6&&EU.perfil!=="admin")return;for(let i=1;i<=6;i++){const s=el("s"+i),m=el("m"+i);if(s)s.hidden=i!=n;if(m)m.setAttribute("aria-current",String(i==n))}if(n===5)cfgLoad();if(n===6)usuarios();if(n===1)renderDashboard();if(n===2)renderAtivos();if(n===3)renderFila();if(n===4)renderHistorico()}
+function progress(s){const p=PROG[s]||{l:NM[s]||s,p:0,c:"#8f9aa7"};return `<span class="progress"><span class="plabel">${p.l}</span><span class="track"><span class="fill" style="width:${p.p}%;background:${p.c}"></span></span></span>`}
+function acoes(x){const b=[];if(x.status==="a_vencer")b.push(`<button class="b p sm" onclick="event.stopPropagation();mudar(${x.id},'email_enviado')">Solicitar Renovação</button>`);else if(x.status==="email_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'whatsapp_enviado')">Enviar Documentos</button>`);else if(x.status==="whatsapp_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'agendado')">Notificar Usuário</button>`);else if(x.status==="agendado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'emitido')">Emitir</button>`);else if(x.status==="emitido")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'pago')">Marcar como pago</button>`);b.push(`<button class="lk" onclick="event.stopPropagation();abrir(${x.id})">Histórico</button>`);return b.join(" ")}
+function tabela(id,lista,opts={}){const cols=opts.cols||["Cliente","Tipo","Vencimento","Valor","Progresso","Ações"];el(id).innerHTML="<tr>"+cols.map(c=>`<th>${c}</th>`).join("")+"</tr>"+(lista.map(x=>`<tr class="${x.id==aberto?"sel":""}" onclick="abrir(${x.id})"><td>${esc(x.cliente)}</td><td>${esc(x.tipo)}</td><td>${br(x.vencimento)}</td><td>${moeda(x.valor)}</td>${opts.status?`<td>${NM[x.status]||x.status}</td>`:`<td>${progress(x.status)}</td>`}<td>${opts.acoes===false?"":acoes(x)}</td></tr>`).join("")||`<tr><td colspan="${cols.length}">Nenhum registro.</td></tr>`)}
+function calcStats(L){const done=s=>["emitido","pago","perdido"].includes(s);return{vencidos:L.filter(x=>x.vencimento<hoje&&!done(x.status)).length,a_vencer:L.filter(x=>x.vencimento>=hoje&&x.vencimento<=dia30&&!done(x.status)).length,em_renovacao:L.filter(x=>["email_enviado","whatsapp_enviado","agendado"].includes(x.status)).length,renovados_mes:L.filter(x=>["emitido","pago"].includes(x.status)&&x.vencimento.startsWith(mesAtual)).length}}
+function renderDashboard(){const L=LISTA||[];const st=calcStats(L);el("c-vencidos").textContent=st.vencidos;el("c-vencer").textContent=st.a_vencer;el("c-renovacao").textContent=st.em_renovacao;el("c-renovados").textContent=st.renovados_mes;const pend=L.filter(x=>!["emitido","pago","perdido"].includes(x.status)).sort((a,b)=>a.vencimento<b.vencimento?-1:1);tabela("tab",pend);if(aberto){const x=L.find(o=>o.id==aberto);if(x)detalhe(x);else{aberto=null;detalheVazio()}}else detalheVazio()}
+function detalheVazio(){el("d-tit").textContent="Selecione uma renovação";el("steps").innerHTML="";el("d-info").innerHTML="<p style='color:var(--mu);font-size:13px'>Clique em uma linha para ver os detalhes.</p>";el("d-hist").innerHTML=""}
+function detalhe(x){const passos=["Solicitação","Validação","Emissão","Instalação"];const idx={a_vencer:0,email_enviado:1,whatsapp_enviado:2,agendado:3,emitido:4,pago:4,perdido:4}[x.status]??0;el("d-tit").textContent=`Renovação ${x.tipo} - ${x.cliente}`;el("steps").innerHTML=passos.map((p,i)=>{const done=i<idx,active=i===idx&&!done;return `<li class="${done?"done":active?"active":""}"><span class="dot">${done?"✓":i+1}</span><span><span class="st">${p}</span><br><span class="sd">${done?"Concluído":active?"Em andamento":"Aguardando"}</span></span></li>`}).join("");el("d-info").innerHTML=`<div><span>Vencimento</span><b>${br(x.vencimento)}</b></div><div><span>Valor</span><b>${moeda(x.valor)}</b></div><div><span>Status</span><b>${NM[x.status]||x.status}</b></div>${x.email?`<div><span>E-mail</span><b>${esc(x.email)}</b></div>`:""}${x.telefone?`<div><span>Telefone</span><b>${esc(x.telefone)}</b></div>`:""}`;j("/api/historico?id="+x.id).then(e=>{el("d-hist").innerHTML=e.length?e.map(v=>`<li><time>${esc(String(v.ts).replace("T"," "))}</time>${esc(v.tipo)}${v.canal?" · "+esc(v.canal):""}${v.resultado?" · "+esc(v.resultado):""}</li>`).join(""):"<li>Sem eventos.</li>"}).catch(()=>{})}
+async function abrir(id){aberto=id;renderDashboard()}
+async function mudar(id,status){try{await post("/api/avancar",{id,status});toast("Status atualizado: "+NM[status]);await carregarTudo()}catch(e){toast("Falha ao atualizar: "+e.message)}}
+async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: nada venceu ou o intervalo de 7 dias ainda não foi atingido.");await carregarTudo()}catch(e){toast("Falha na régua: "+e.message)}}
+function renderAtivos(){const L=LISTA||[];const at=L.filter(x=>["emitido","pago"].includes(x.status)).sort((a,b)=>a.vencimento<b.vencimento?-1:1);tabela("tab-ativos",at,{status:true,cols:["Cliente","Tipo","Vencimento","Valor","Status","Ações"]})}
+function renderFila(){const L=LISTA||[];const f=L.filter(x=>!["emitido","pago","perdido"].includes(x.status)).sort((a,b)=>a.vencimento<b.vencimento?-1:1);tabela("tab-fila",f)}
+function renderHistorico(){const L=LISTA||[];const h=L.filter(x=>["emitido","pago","perdido"].includes(x.status)).sort((a,b)=>a.vencimento>b.vencimento?-1:1);tabela("tab-hist",h,{status:true,cols:["Cliente","Tipo","Vencimento","Valor","Status","Ações"]})}
+async function carregarTudo(){try{LISTA=await j("/api/renovacoes");renderDashboard();renderAtivos();renderFila();renderHistorico()}catch(e){toast("Falha ao carregar: "+e.message)}}
 async function cfgLoad(){
  try{
+  el("tema").value=temaSalvo();
   const c=await j("/api/config");el("cu").value=c.url||"";el("cp").value=c.pipeline||"";el("ct").value="";
   el("ct").placeholder=c.token_definido?"(salvo; deixe vazio para manter)":"token de longa duração";
   el("ce").innerHTML=ST.map(s=>`<label>${s[1]}<input id="e_${s[0]}" inputmode="numeric" value="${esc((c.etapas||{})[s[0]]??"")}"></label>`).join("");
@@ -783,14 +897,18 @@ async function salvar(){
 }
 async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
 async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
-async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await render()}catch(e){toast("Falha ao importar: "+e.message)}}
-async function carregarEu(){try{EU=await j("/api/eu");el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`+(EU.validade?` · certificado válido até ${br(EU.validade)}`:"");const adm=EU.perfil==="admin";el("n2").hidden=!adm;el("n3").hidden=!adm;if(!adm&&!el("s2").hidden)aba(1)}catch(e){}}
-async function usuarios(){try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
+async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await carregarTudo()}catch(e){toast("Falha ao importar: "+e.message)}}
+async function carregarEu(){try{EU=await j("/api/eu");el("eu")&&(el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`);const adm=EU.perfil==="admin";const m6=el("m6"),s6=el("s6");if(m6)m6.hidden=!adm;if(!adm){if(m6)m6.remove();if(s6)s6.remove()}}catch(e){}}
+async function usuarios(){if(EU.perfil!=="admin")return;try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
 async function ativar(id,ativo){try{await post("/api/usuarios/ativo",{id,ativo});toast(ativo?"Usuário ativado.":"Usuário desativado.")}catch(e){toast("Falha: "+e.message);usuarios()}}
 async function remover(id){if(!confirm("Remover este usuário?"))return;try{await post("/api/usuarios/remover",{id});toast("Usuário removido.");usuarios()}catch(e){toast("Falha: "+e.message)}}
 async function cadastrarCert(){const f=el("uf").files[0];if(!f)return toast("Escolha o certificado.");const nome=el("un").value.trim();if(!nome)return toast("Informe o nome.");const q=new URLSearchParams({nome,email:el("ue").value.trim(),perfil:el("up").value,arquivo:f.name});const h={"X-Requested-With":"fetch"};const s=el("us").value;if(s)h["X-Pfx-Senha"]=s;try{const r=await j("/api/usuarios?"+q,{method:"POST",headers:h,body:f});toast("Certificado cadastrado. Válido até "+br(r.validade)+".");el("uf").value="";el("us").value="";usuarios()}catch(e){toast("Falha: "+e.message)}}
-carregarEu();aba(1);render();
-</script></body></html>"""
+function novo(){el("modal").hidden=false;el("nv-cliente").value="";el("nv-tipo").value="e-CNPJ A1";el("nv-venc").value="";el("nv-valor").value="";el("nv-email").value="";el("nv-tel").value="";el("nv-cliente").focus()}
+function fecharModal(){el("modal").hidden=true}
+async function salvarNovo(){const cliente=el("nv-cliente").value.trim(),tipo=el("nv-tipo").value,vencimento=el("nv-venc").value;if(!cliente||!vencimento)return toast("Informe cliente e vencimento.");const valor=el("nv-valor").value.trim(),email=el("nv-email").value.trim(),telefone=el("nv-tel").value.trim();try{await post("/api/renovacoes",{cliente,tipo,vencimento,valor:valor||undefined,email,telefone});fecharModal();toast("Renovação criada.");await carregarTudo()}catch(e){toast("Falha: "+e.message)}}
+aplicarTema(temaSalvo());carregarEu();carregarTudo();
+</script></body></html>
+"""
 
 
 class H(BaseHTTPRequestHandler):
@@ -891,7 +1009,11 @@ class H(BaseHTTPRequestHandler):
         if mes and not MES_RE.match(mes):
             return self._send({"erro": "mês inválido: use AAAA-MM"}, code=400)
         if u.path == "/":
-            return self._send(HTML, "text/html")
+            html = HTML
+            if not self._admin():
+                html = re.sub(r"<!--USUARIOS_NAV_INICIO-->.*?<!--USUARIOS_NAV_FIM-->", "", html, flags=re.S)
+                html = re.sub(r"<!--USUARIOS_SECAO_INICIO-->.*?<!--USUARIOS_SECAO_FIM-->", "", html, flags=re.S)
+            return self._send(html, "text/html")
         if u.path == "/api/metricas":
             return self._send(metricas(mes))
         if u.path == "/api/renovacoes":
@@ -911,8 +1033,6 @@ class H(BaseHTTPRequestHandler):
             return self._send([_dict(r) for r in db().execute(
                 "SELECT id,nome,email,perfil,sujeito,validade,ativo FROM usuarios ORDER BY nome")])
         if u.path == "/api/config":
-            if not self._admin():
-                return self._send({"erro": "apenas administradores"}, code=403)
             return self._send({"url": K["url"], "pipeline": K["pipeline"], "etapas": K["etapas"],
                                "token_definido": bool(K["token"])})
         return self._send({"erro": "não encontrado"}, code=404)
@@ -944,7 +1064,7 @@ class H(BaseHTTPRequestHandler):
         # CSRF: navegador não consegue mandar este header cross-site sem preflight (que não atendemos)
         if self.headers.get("X-Requested-With") != "fetch":
             return self._send({"erro": "requisição inválida"}, code=403)
-        if p.startswith(("/api/usuarios", "/api/config")) and not self._admin():
+        if p.startswith("/api/usuarios") and not self._admin():
             return self._send({"erro": "apenas administradores"}, code=403)
         if p == "/api/usuarios":       # corpo = .cer/.crt/.pem (ou .pfx)
             return self._cadastrar_usuario(body, u)
@@ -955,6 +1075,8 @@ class H(BaseHTTPRequestHandler):
         if not isinstance(d, dict):
             return self._send({"erro": "JSON inválido"}, code=400)
 
+        if p == "/api/renovacoes":
+            return self._criar_renovacao(d)
         if p == "/api/avancar":
             try:
                 rid = int(d.get("id"))
@@ -1003,6 +1125,40 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send({"msg": f"Falhou: {e}"})
         return self._send({"erro": "não encontrado"}, code=404)
+
+    def _criar_renovacao(self, d):
+        cliente = str(d.get("cliente") or "").strip()[:200]
+        tipo = str(d.get("tipo") or "").strip()[:80]
+        venc = str(d.get("vencimento") or "").strip()
+        if not cliente or not tipo or not venc:
+            return self._send({"erro": "cliente, tipo e vencimento são obrigatórios"}, code=400)
+        try:
+            dt = datetime.strptime(venc, "%Y-%m-%d").date()
+        except ValueError:
+            try:
+                dt = datetime.strptime(venc, "%d/%m/%Y").date()
+            except ValueError:
+                return self._send({"erro": "vencimento inválido"}, code=400)
+        valor = d.get("valor")
+        if valor not in (None, ""):
+            try:
+                valor = float(valor)
+            except (TypeError, ValueError):
+                return self._send({"erro": "valor inválido"}, code=400)
+        else:
+            valor = None
+        email = str(d.get("email") or "").strip()[:200] or None
+        telefone = str(d.get("telefone") or "").strip()[:40] or None
+        try:
+            cur = db().execute(
+                "INSERT INTO renovacoes(cliente,email,telefone,tipo,vencimento,valor,status) "
+                "VALUES(?,?,?,?,?,?,'a_vencer')",
+                (cliente, email, telefone, tipo, dt.isoformat(), valor))
+        except sqlite3.IntegrityError:
+            return self._send({"erro": "já existe uma renovação com esse cliente, tipo e vencimento"}, code=409)
+        row = _dict(db().execute("SELECT * FROM renovacoes WHERE id=?", (cur.lastrowid,)).fetchone())
+        log(row["id"], "criado", "painel")
+        return self._send(row, code=201)
 
     def _config(self, d):
         with _cfg_lock:

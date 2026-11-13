@@ -810,7 +810,6 @@ async function rotaGet(env, K, url, user, admin) {
     );
   }
   if (p === "/api/config") {
-    if (!admin) throw new HttpError(403, "apenas administradores");
     return json({
       url: K.url,
       pipeline: K.pipeline,
@@ -921,6 +920,55 @@ async function importar(env, url, body) {
     }
   }
   return json({ novas, atualizadas, ignoradas: ignoradasTotal, avisos, detalhes });
+}
+
+async function criarRenovacao(env, body) {
+  let d;
+  try {
+    d = JSON.parse(new TextDecoder().decode(body) || "{}");
+  } catch {
+    throw new HttpError(400, "JSON inválido");
+  }
+  if (!d || typeof d !== "object" || Array.isArray(d)) throw new HttpError(400, "JSON inválido");
+  const cliente = String(d.cliente || "").trim().slice(0, 200);
+  const tipo = String(d.tipo || "").trim().slice(0, 80);
+  const venc = String(d.vencimento || "").trim();
+  if (!cliente || !tipo || !venc) throw new HttpError(400, "cliente, tipo e vencimento são obrigatórios");
+  let dt = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(venc)) dt = venc;
+  else if (/^\d{2}\/\d{2}\/\d{4}$/.test(venc)) {
+    const [dd, mm, yyyy] = venc.split("/");
+    dt = `${yyyy}-${mm}-${dd}`;
+  }
+  if (!dt) throw new HttpError(400, "vencimento inválido");
+  let valor = null;
+  if (d.valor !== undefined && d.valor !== null && d.valor !== "") {
+    valor = Number(d.valor);
+    if (!Number.isFinite(valor)) throw new HttpError(400, "valor inválido");
+  }
+  const email = String(d.email || "").trim().slice(0, 200) || null;
+  const telefone = String(d.telefone || "").trim().slice(0, 40) || null;
+  try {
+    const ins = await first(
+      env,
+      "INSERT INTO renovacoes(cliente,email,telefone,tipo,vencimento,valor) VALUES(?,?,?,?,?,?) RETURNING id",
+      cliente,
+      email,
+      telefone,
+      tipo,
+      dt,
+      valor,
+    );
+    if (!ins) throw new HttpError(500, "não foi possível criar");
+    const row = await first(env, "SELECT * FROM renovacoes WHERE id=?", ins.id);
+    await log(env, ins.id, "criado", "painel");
+    return json(row, 201);
+  } catch (e) {
+    if (String(e).toUpperCase().includes("UNIQUE")) {
+      throw new HttpError(409, "já existe uma renovação com esse cliente, tipo e vencimento");
+    }
+    throw e;
+  }
 }
 
 async function salvarConfig(env, d) {
@@ -1034,12 +1082,13 @@ async function rotaPost(env, K, url, request, user, admin) {
   }
 
   if (p === "/api/importar") return await importar(env, url, body);
+  if (p === "/api/renovacoes") return await criarRenovacao(env, body);
 
   if (p === "/api/usuarios") {
     if (!admin) throw new HttpError(403, "apenas administradores");
     return await cadastrarUsuario(env, url, body);
   }
-  if (p.startsWith("/api/usuarios") || p.startsWith("/api/config")) {
+  if (p.startsWith("/api/usuarios")) {
     if (!admin) throw new HttpError(403, "apenas administradores");
   }
 

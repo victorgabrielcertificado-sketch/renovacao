@@ -121,6 +121,12 @@ Com `AUTH_CERT=1` o app escuta só em `127.0.0.1` (o proxy é quem fica exposto)
 cadastro aceita `.cer`, `.crt`, `.pem`, `.pfx` e `.p12` (a senha do `.pfx` é usada só para extrair
 o certificado e não é armazenada).
 
+**Perfis:** o `admin` vê todas as abas; o `operador` vê **Renovações** e **Configurações**
+(importação de planilha e integração Kommo). A aba **Usuários** é exclusiva do perfil `admin`.
+
+**Tema:** em **Configurações → Aparência** é possível escolher **Automático**, **Claro** ou
+**Escuro**; a preferência fica salva no navegador.
+
 ## Versão Cloudflare Pages (`*.pages.dev`)
 
 A pasta [`cloudflare/`](cloudflare/README.md) traz a mesma aplicação para rodar em

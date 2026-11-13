@@ -141,7 +141,8 @@ Recursos adicionados depois da revisão inicial:
   só é aceito quando `X-Proxy-Secret` confere com `PROXY_SECRET`.
 - Rotas `/api/eu`, `/api/usuarios` (GET/POST), `/api/usuarios/ativo` e `/api/usuarios/remover`.
 - Aba **Usuários** no painel: lista, ativa/desativa, remove e cadastra certificados.
-- Perfis `admin` e `operador`: operador não acessa Configurações nem Usuários (GET e POST).
+- Perfis `admin` e `operador`: operador acessa Renovações e Configurações (importação e Kommo),
+  mas não acessa a aba/rotas de Usuários (GET e POST).
 - Com `AUTH_CERT=1` o app escuta só em `127.0.0.1`; o proxy (nginx) é quem fica exposto e exige o
   certificado no TLS.
 - Primeiro administrador: subir com `PAINEL_SENHA` (login de emergência), cadastrar o certificado

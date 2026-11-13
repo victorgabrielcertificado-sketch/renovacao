@@ -323,6 +323,7 @@ class Http(unittest.TestCase):
         status, headers, corpo = self.req("/")
         self.assertEqual(status, 200)
         self.assertIn("Renovação de certificados", corpo.decode())
+        self.assertIn("Usuários", corpo.decode())
         self.assertIn("Content-Security-Policy", headers)
 
     def test_csrf_bloqueia_post_sem_header(self):
@@ -341,6 +342,26 @@ class Http(unittest.TestCase):
                                    {"Content-Type": "text/csv", "X-Requested-With": "fetch"})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(resp)["novas"], 1)
+
+    def test_criar_renovacao(self):
+        status, _, resp = self.post_json("/api/renovacoes",
+                                         {"cliente": "Nova", "tipo": "e-CNPJ A1", "vencimento": "2027-01-15"})
+        self.assertEqual(status, 201)
+        rid = json.loads(resp)["id"]
+        self.assertEqual(R.db().execute("SELECT status FROM renovacoes WHERE id=?", (rid,)).fetchone()[0], "a_vencer")
+        # data no formato brasileiro também é aceita
+        status, _, _ = self.post_json("/api/renovacoes",
+                                      {"cliente": "Nova", "tipo": "e-CNPJ A1", "vencimento": "15/02/2027"})
+        self.assertEqual(status, 201)
+        # duplicado (mesmo cliente, tipo e vencimento)
+        status, _, _ = self.post_json("/api/renovacoes",
+                                      {"cliente": "Nova", "tipo": "e-CNPJ A1", "vencimento": "2027-01-15"})
+        self.assertEqual(status, 409)
+        # inválidos
+        self.assertEqual(self.post_json("/api/renovacoes",
+                                        {"cliente": "", "tipo": "e-CNPJ A1", "vencimento": "2027-01-15"})[0], 400)
+        self.assertEqual(self.post_json("/api/renovacoes",
+                                        {"cliente": "Nova", "tipo": "e-CNPJ A1", "vencimento": "2027-13-99"})[0], 400)
 
     def test_metricas_mes_invalido(self):
         self.assertEqual(self.req("/api/metricas?mes=2026-13")[0], 400)
@@ -409,9 +430,18 @@ class Http(unittest.TestCase):
             h = self.cert_headers(pem)
             self.assertEqual(self.req("/api/renovacoes", headers=h)[0], 200)
             self.assertEqual(self.req("/api/usuarios", headers=h)[0], 403)
-            self.assertEqual(self.req("/api/config", headers=h)[0], 403)
+            # Configurações e importação são liberadas para operadores.
+            self.assertEqual(self.req("/api/config", headers=h)[0], 200)
             self.assertEqual(self.req("/api/config", "POST", b"{}",
-                                      {**h, "X-Requested-With": "fetch"})[0], 403)
+                                      {**h, "X-Requested-With": "fetch"})[0], 200)
+            corpo = "Cliente;Vencimento\nOperador;31/12/2027\n".encode()
+            self.assertEqual(self.req("/api/importar?nome=op.csv", "POST", corpo,
+                                      {**h, "Content-Type": "text/csv",
+                                       "X-Requested-With": "fetch"})[0], 200)
+            status, _, html = self.req("/", headers=h)
+            self.assertEqual(status, 200)
+            self.assertIn("Configurações", html.decode())
+            self.assertNotIn("Usuários", html.decode())
         finally:
             os.environ.pop("AUTH_CERT", None)
             os.environ.pop("PROXY_SECRET", None)

@@ -5,10 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Entrar · Renovação de certificados</title>
+<script>try{var _t=localStorage.getItem("tema");if(_t==="light"||_t==="dark"){document.documentElement.dataset.theme=_t;document.documentElement.style.colorScheme=_t}}catch(e){}</script>
 <link href="/fonts.css" rel="stylesheet">
 <style>
 :root{--bg:#f4f6f8;--sf:#fff;--tx:#14263a;--mu:#5d6b7a;--ln:#dce2e8;--ac:#0f6f73;--ac2:#e3f1f1}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}}
+:root[data-theme="dark"]{--bg:#0f1820;--sf:#16212c;--tx:#e8eef4;--mu:#9aa9b8;--ln:#293846;--ac:#5cc4c7;--ac2:#13343a}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;padding:24px}
 .card{width:100%;max-width:380px;background:var(--sf);border:1px solid var(--ln);border-radius:16px;padding:28px;box-shadow:0 18px 40px rgba(0,0,0,.08)}
