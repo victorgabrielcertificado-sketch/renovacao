@@ -6,7 +6,8 @@ Uso CLI:  python renovacao.py demo | importar <planilha> | regua [--hoje AAAA-MM
           metricas [--mes AAAA-MM] | avancar <id> <status> | exportar [arquivo.xlsx]
 
 Config por variáveis de ambiente (sem elas, e-mail e Kommo rodam em modo simulação):
-  SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TLS=0 (desliga STARTTLS)
+  SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_SEGURANCA=starttls|ssl|none
+  EMAIL_ASSUNTO, EMAIL_CORPO, EMAIL_REMETENTE_NOME, EMAIL_RESPOSTA
   LINK_AGENDA
   KOMMO_URL (https://SUB.kommo.com), KOMMO_TOKEN, KOMMO_PIPELINE,
   KOMMO_ETAPAS='{"a_vencer":123,"email_enviado":124,...}'  (status -> id da etapa)
@@ -16,6 +17,7 @@ Config por variáveis de ambiente (sem elas, e-mail e Kommo rodam em modo simula
 import argparse, base64, calendar, hmac, json, os, random, re, smtplib, sqlite3, tempfile, threading, time, unicodedata, urllib.error, urllib.request
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
+from email.utils import formataddr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 import pandas as pd
@@ -55,9 +57,40 @@ def _json_env(nome, padrao):
         return padrao
 
 
+EMAIL_ASSUNTO_PADRAO = "Seu certificado {tipo} {quando}"
+EMAIL_CORPO_PADRAO = (
+    "Olá, {cliente}!\n\n"
+    "Seu certificado digital {tipo} {quando} ({vencimento}).\n"
+    "Para renovar sem interrupção, agende aqui: {link}\n\n"
+    "Atenciosamente,\n{empresa}\n"
+)
+MENSAGEM_WHATSAPP_PADRAO = (
+    "Olá, {cliente}! Seu certificado {tipo} {quando}. "
+    "Podemos falar sobre a renovação?"
+)
+MENSAGEM_KOMMO_PADRAO = (
+    "Aviso de renovação: certificado {tipo} de {cliente} {quando} ({vencimento})."
+)
+
 _ENV_K = {"url": os.getenv("KOMMO_URL"), "token": os.getenv("KOMMO_TOKEN"),
-          "pipeline": os.getenv("KOMMO_PIPELINE"), "etapas": _json_env("KOMMO_ETAPAS", {})}
+          "pipeline": os.getenv("KOMMO_PIPELINE"), "etapas": _json_env("KOMMO_ETAPAS", {}),
+          "email_assunto": os.getenv("EMAIL_ASSUNTO", EMAIL_ASSUNTO_PADRAO),
+          "email_corpo": os.getenv("EMAIL_CORPO", EMAIL_CORPO_PADRAO),
+          "email_remetente_nome": os.getenv("EMAIL_REMETENTE_NOME", "Equipe de Renovação"),
+          "email_remetente": os.getenv("SMTP_FROM", "renovacao@exemplo.com"),
+          "email_resposta": os.getenv("EMAIL_RESPOSTA", ""),
+          "email_link": os.getenv("LINK_AGENDA", "https://exemplo.com/agendar"),
+          "mensagem_whatsapp": os.getenv("MENSAGEM_WHATSAPP", MENSAGEM_WHATSAPP_PADRAO),
+          "mensagem_kommo": os.getenv("MENSAGEM_KOMMO", MENSAGEM_KOMMO_PADRAO),
+          "smtp_host": os.getenv("SMTP_HOST", ""),
+          "smtp_port": os.getenv("SMTP_PORT", "587"),
+          "smtp_usuario": os.getenv("SMTP_USER", ""),
+          "smtp_senha": os.getenv("SMTP_PASS", ""),
+          "smtp_seguranca": os.getenv("SMTP_SEGURANCA", "starttls")}
 K = dict(_ENV_K)
+CHAVES_MENSAGENS = ("email_assunto", "email_corpo", "email_remetente_nome", "email_remetente",
+                    "email_resposta", "email_link", "mensagem_whatsapp", "mensagem_kommo",
+                    "smtp_host", "smtp_port", "smtp_usuario", "smtp_senha", "smtp_seguranca")
 _cfg_lock = threading.Lock()
 _local = threading.local()
 _regua_lock = threading.Lock()
@@ -66,6 +99,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS renovacoes(id INTEGER PRIMARY KEY, cliente TEXT NOT NULL, email TEXT, telefone TEXT,
   tipo TEXT NOT NULL, vencimento TEXT NOT NULL, valor REAL, status TEXT NOT NULL DEFAULT 'a_vencer',
   kommo_lead_id INTEGER, regua_ultima INTEGER, ultimo_email TEXT,
+  email_envio TEXT, enviar_email INTEGER NOT NULL DEFAULT 1,
   UNIQUE(cliente, tipo, vencimento));
 CREATE TABLE IF NOT EXISTS usuarios(id INTEGER PRIMARY KEY, nome TEXT NOT NULL, email TEXT,
   perfil TEXT NOT NULL DEFAULT 'operador', fp TEXT UNIQUE, sujeito TEXT, validade TEXT,
@@ -91,14 +125,17 @@ def db():
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA busy_timeout=30000")
         c.executescript(SCHEMA)
-        # Migração leve para bancos criados antes da coluna ultimo_email.
+        # Migração leve para bancos criados antes das colunas de e-mail.
         colunas = {linha[1] for linha in c.execute("PRAGMA table_info(renovacoes)")}
-        if "ultimo_email" not in colunas:
-            try:
-                c.execute("ALTER TABLE renovacoes ADD COLUMN ultimo_email TEXT")
-            except sqlite3.OperationalError as e:
-                if "duplicate column name" not in str(e).lower():
-                    raise
+        migracoes = (("ultimo_email", "TEXT"), ("email_envio", "TEXT"),
+                     ("enviar_email", "INTEGER NOT NULL DEFAULT 1"))
+        for nome, tipo in migracoes:
+            if nome not in colunas:
+                try:
+                    c.execute(f"ALTER TABLE renovacoes ADD COLUMN {nome} {tipo}")
+                except sqlite3.OperationalError as e:
+                    if "duplicate column name" not in str(e).lower():
+                        raise
         _local.conn = c
     return c
 
@@ -482,32 +519,91 @@ def _quando(dias):
     return f"venceu há {d} dia" + ("s" if d != 1 else "")
 
 
-def enviar_email(r, dias):
-    """Retorna (enviado, permanente). permanente=True => repetir não adianta."""
-    destino = _texto(r["email"])
-    if not destino or not EMAIL_RE.match(destino):
-        log(r["id"], "email", "email", "ignorado", "sem e-mail válido")
-        return False, True
-    quando = _quando(dias)
-    m = EmailMessage()
-    m["Subject"] = f"Seu certificado {r['tipo']} {quando}"
-    m["From"] = os.getenv("SMTP_FROM", "renovacao@exemplo.com")
-    m["To"] = destino
-    m.set_content(f"Olá, {r['cliente']}!\n\nSeu certificado digital {r['tipo']} {quando} ({r['vencimento']}). "
-                  f"Para renovar sem interrupção, agende aqui: {os.getenv('LINK_AGENDA', 'https://exemplo.com/agendar')}\n")
+def _data_br(valor):
+    try:
+        return date.fromisoformat(str(valor)[:10]).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return str(valor or "")
 
-    host = os.getenv("SMTP_HOST")
+
+def _moeda(valor):
+    try:
+        return "R$ " + f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _render_modelo(texto, r, dias):
+    """Substitui as variáveis do modelo de e-mail pelos dados da renovação."""
+    valores = {
+        "cliente": _texto(r["cliente"]),
+        "tipo": _texto(r["tipo"]),
+        "vencimento": _data_br(r["vencimento"]),
+        "quando": _quando(dias),
+        "dias": str(dias),
+        "valor": _moeda(r["valor"]),
+        "link": K.get("email_link") or "",
+        "empresa": K.get("email_remetente_nome") or "",
+        "remetente": K.get("email_remetente") or "",
+    }
+    for chave, valor in valores.items():
+        texto = texto.replace("{" + chave + "}", str(valor))
+    return texto
+
+
+def email_destino(r):
+    """E-mail que realmente recebe o aviso: o alternativo ou o importado, se o envio estiver ativo."""
+    try:
+        ativo = int(r["enviar_email"] if r["enviar_email"] is not None else 1)
+    except (KeyError, TypeError, ValueError):
+        ativo = 1
+    if not ativo:
+        return None
+    try:
+        bruto = _texto(r["email_envio"]) or _texto(r["email"])
+    except KeyError:
+        bruto = _texto(r["email"])
+    return bruto if bruto and EMAIL_RE.match(bruto) else None
+
+
+def enviar_email(r, dias, log_evento=True):
+    """Retorna (enviado, permanente). permanente=True => repetir não adianta."""
+    destino = email_destino(r)
+    if not destino:
+        if log_evento:
+            log(r["id"], "email", "email", "ignorado", "sem e-mail válido ou envio desativado")
+        return False, True
+    assunto = _render_modelo(K.get("email_assunto") or EMAIL_ASSUNTO_PADRAO, r, dias).strip()
+    if not assunto:
+        assunto = f"Seu certificado {r['tipo']} {_quando(dias)}"
+    corpo = _render_modelo(K.get("email_corpo") or EMAIL_CORPO_PADRAO, r, dias)
+    remetente = K.get("email_remetente") or "renovacao@exemplo.com"
+    nome = (K.get("email_remetente_nome") or "").strip()
+
+    m = EmailMessage()
+    m["Subject"] = assunto[:200]
+    m["From"] = formataddr((nome, remetente)) if nome else remetente
+    m["To"] = destino
+    if K.get("email_resposta"):
+        m["Reply-To"] = K["email_resposta"]
+    m.set_content(corpo)
+
+    host = K.get("smtp_host")
     if not host:
         print(f"  [e-mail simulado] {destino}: {m['Subject']}")
         return True, False
-    porta = int(os.getenv("SMTP_PORT", "587"))
+    seguranca = (K.get("smtp_seguranca") or "starttls").lower()
     try:
-        smtp = smtplib.SMTP_SSL(host, porta, timeout=20) if porta == 465 else smtplib.SMTP(host, porta, timeout=20)
+        porta = int(K.get("smtp_port") or (465 if seguranca == "ssl" else 587))
+    except (TypeError, ValueError):
+        porta = 465 if seguranca == "ssl" else 587
+    try:
+        smtp = smtplib.SMTP_SSL(host, porta, timeout=20) if seguranca == "ssl" else smtplib.SMTP(host, porta, timeout=20)
         with smtp as s:
-            if porta != 465 and os.getenv("SMTP_TLS", "1") != "0":
+            if seguranca == "starttls":
                 s.starttls()
-            if os.getenv("SMTP_USER"):
-                s.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASS", ""))
+            if K.get("smtp_usuario"):
+                s.login(K["smtp_usuario"], K.get("smtp_senha") or "")
             s.send_message(m)
         return True, False
     except smtplib.SMTPRecipientsRefused as e:   # endereço inexistente: não adianta repetir
@@ -522,10 +618,13 @@ def enviar_whatsapp(r, dias):
     """Ponto de extensão: Salesbot da Kommo / canal WhatsApp conectado. Aqui registramos nota no lead."""
     if not _telefone(r["telefone"]):
         return False
+    texto = _render_modelo(K.get("mensagem_whatsapp") or MENSAGEM_WHATSAPP_PADRAO, r, dias).strip()
+    if not texto:
+        texto = f"WhatsApp de renovação: certificado {r['tipo']} {_quando(dias)} ({r['vencimento']})"
     if not (K["url"] and K["token"]):
-        print(f"  [whatsapp simulado] {r['telefone']}: certificado {_quando(dias)}")
+        print(f"  [whatsapp simulado] {r['telefone']}: {texto}")
         return True
-    return sync_kommo(r["id"], nota=f"WhatsApp de renovação: certificado {r['tipo']} {_quando(dias)} ({r['vencimento']})")
+    return sync_kommo(r["id"], nota=texto)
 
 
 def regua(hoje=None):
@@ -548,7 +647,7 @@ def regua(hoje=None):
             notificou = False
 
             # E-mail: aviso a partir de D30 e repetição a cada 7 dias, até concluir.
-            tem_email = bool(_texto(r["email"]) and EMAIL_RE.match(r["email"]))
+            tem_email = bool(email_destino(r))
             if tem_email and dias <= EMAIL_INICIO:
                 ultimo = r["ultimo_email"]
                 desde = None
@@ -611,6 +710,8 @@ def carregar_cfg():   # configurações salvas no painel (sobrepõem as variáve
         for r in db().execute("SELECT chave, valor FROM config"):
             chave, valor = r["chave"], r["valor"]
             if chave in ("url", "token", "pipeline") and valor is not None:
+                novo[chave] = valor
+            elif chave in CHAVES_MENSAGENS and valor is not None:
                 novo[chave] = valor
             elif chave == "etapas" and valor:
                 try:
@@ -687,7 +788,12 @@ HTML = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta n
 *{box-sizing:border-box}[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
 .app{display:flex;min-height:100vh}
-.side{width:236px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--ln);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.side{width:236px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--ln);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;transition:width .18s ease}
+.side.collapsed{width:72px}
+.side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:none}
+.side.collapsed .brand{justify-content:center;padding:18px 8px}
+.side.collapsed .mi{justify-content:center;padding:10px}
+.side.collapsed .side-foot{text-align:center;padding:12px 6px}
 .brand{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid var(--ln)}
 .logo{width:34px;height:34px;flex-shrink:0}
 .brand-txt{font-size:11px;font-weight:800;letter-spacing:.03em;line-height:1.3;text-transform:uppercase}
@@ -699,10 +805,11 @@ body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system
 .side-foot{padding:12px;border-top:1px solid var(--ln);font-size:12px;color:var(--mu)}
 .side-foot .mi{color:var(--tx);padding:6px 0}
 .wrap{flex:1;min-width:0;display:flex;flex-direction:column}
-.top{background:var(--sf);border-bottom:1px solid var(--ln);padding:14px 24px;display:flex;align-items:center;gap:16px}
+.top{background:var(--sf);border-bottom:1px solid var(--ln);padding:14px 24px;display:flex;align-items:center;gap:10px}
 .top h1{font-size:16px;font-weight:800;margin:0 auto 0 0}
+.top-actions{display:flex;align-items:center;gap:10px}
 .bell{width:38px;height:38px;border-radius:50%;border:1px solid var(--ln);background:var(--sf);font-size:17px;cursor:pointer;display:grid;place-items:center}
-.bell:hover{background:var(--ac2)}
+.bell:hover{background:var(--ac2)}.bell[aria-pressed="true"]{background:var(--ac2);border-color:var(--ac)}
 main{padding:24px;width:100%;max-width:1440px;margin:0 auto}
 h2{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0 0 18px}
 h3{font-size:16px;margin:0 0 12px}
@@ -747,10 +854,16 @@ button.b:hover{background:var(--bg)}
 button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button.p{color:#0b1a1c}}
 button.sm{padding:4px 9px;font-size:12px;border-radius:6px}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
-select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}
 .lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
-.cfg label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}.cfg input,.cfg select{display:block;margin-top:4px;width:min(420px,100%)}.et{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin:8px 0 14px}.et label{margin:0}
+.cfg label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}.cfg input,.cfg select,.cfg textarea{display:block;margin-top:4px;width:min(420px,100%)}.cfg textarea{min-height:240px;resize:vertical;line-height:1.5}.et{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 14px;margin:8px 0 14px}.et label{margin:0}
+.msg-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:12px}.msg-head p{margin:0;font-size:13px;color:var(--mu);flex:1}
+.vars{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 16px}
+.chip{font:inherit;font-size:12px;font-weight:600;background:var(--ac2);color:var(--tx);border:1px solid var(--ln);border-radius:999px;padding:4px 10px;cursor:pointer}
+.chip:hover{border-color:var(--ac)}
+.msg-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 18px}
+.d-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;z-index:20;padding:20px}
 .modal-card{background:var(--sf);border-radius:14px;padding:20px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto}
 .modal-card label{display:block;margin:10px 0;font-size:13px;color:var(--mu)}
@@ -758,7 +871,7 @@ select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid 
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 #msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}#msg.on{opacity:1}
 @media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.dash{grid-template-columns:1fr}.detail{position:static}}
-@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}}
+@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}#btn-menu,#btn-fixar{display:none}.side.collapsed{width:100%}.side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:inline}.side.collapsed .brand{justify-content:flex-start;padding:12px}.side.collapsed .mi{justify-content:flex-start;padding:9px 12px}}
 </style></head><body>
 <div class="app">
 <aside class="side">
@@ -767,17 +880,18 @@ select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid 
   <div class="brand-txt">Sistema de<br>Renovação de<br>Certificados</div>
  </div>
  <nav class="menu">
-  <button id="m1" class="mi" onclick="aba(1)" aria-current="true"><span class="ic">▦</span>Painel Geral</button>
-  <button id="m2" class="mi" onclick="aba(2)" aria-current="false"><span class="ic">▤</span>Certificados Ativos</button>
-  <button id="m3" class="mi" onclick="aba(3)" aria-current="false"><span class="ic">☰</span>Fila de Renovação</button>
-  <button id="m4" class="mi" onclick="aba(4)" aria-current="false"><span class="ic">↺</span>Histórico</button>
-  <button id="m5" class="mi" onclick="aba(5)" aria-current="false"><span class="ic">⚙</span>Configurações</button>
-  <!--USUARIOS_NAV_INICIO--><button id="m6" class="mi" onclick="aba(6)" aria-current="false" hidden><span class="ic">👥</span>Usuários</button><!--USUARIOS_NAV_FIM-->
+  <button id="m1" class="mi" onclick="aba(1)" aria-current="true" title="Painel Geral"><span class="ic">▦</span><span class="lbl">Painel Geral</span></button>
+  <button id="m2" class="mi" onclick="aba(2)" aria-current="false" title="Certificados Ativos"><span class="ic">▤</span><span class="lbl">Certificados Ativos</span></button>
+  <button id="m3" class="mi" onclick="aba(3)" aria-current="false" title="Fila de Renovação"><span class="ic">☰</span><span class="lbl">Fila de Renovação</span></button>
+  <button id="m4" class="mi" onclick="aba(4)" aria-current="false" title="Histórico"><span class="ic">↺</span><span class="lbl">Histórico</span></button>
+  <button id="m7" class="mi" onclick="aba(7)" aria-current="false" title="Mensagens"><span class="ic">✉</span><span class="lbl">Mensagens</span></button>
+  <button id="m5" class="mi" onclick="aba(5)" aria-current="false" title="Configurações"><span class="ic">⚙</span><span class="lbl">Configurações</span></button>
+  <!--USUARIOS_NAV_INICIO--><button id="m6" class="mi" onclick="aba(6)" aria-current="false" title="Usuários" hidden><span class="ic">👥</span><span class="lbl">Usuários</span></button><!--USUARIOS_NAV_FIM-->
  </nav>
  <div class="side-foot"><span id="eu"></span></div>
 </aside>
 <div class="wrap">
-<header class="top"><h1>Renovação de certificados</h1><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button></header>
+<header class="top"><button id="btn-menu" class="bell" onclick="alternarMenu()" title="Recolher menu" aria-label="Recolher menu">«</button><button id="btn-fixar" class="bell" onclick="fixarMenu()" title="Fixar menu" aria-label="Fixar menu" aria-pressed="false">📌</button><h1>Renovação de certificados</h1><div class="top-actions"><button id="btn-tema" class="bell" onclick="ciclarTema()" title="Alterar tema" aria-label="Alterar tema">🌓</button><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button></div></header>
 <main>
 <section id="s1">
  <h2>Processo de Renovação de Certificados</h2>
@@ -796,6 +910,8 @@ select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid 
    <h3 id="d-tit">Selecione uma renovação</h3>
    <ol class="steps" id="steps"></ol>
    <div class="info" id="d-info"></div>
+   <div id="d-email"></div>
+   <div id="d-msg"></div>
    <h3 style="margin-top:14px">Histórico</h3>
    <ul class="hist" id="d-hist"></ul>
   </aside>
@@ -812,6 +928,45 @@ select,input{font:inherit;color:var(--tx);background:var(--sf);border:1px solid 
 <section id="s4" hidden>
  <h2>Histórico</h2>
  <div class="panel"><div class="cx"><table id="tab-hist"></table></div></div>
+</section>
+<section id="s7" hidden class="cfg"><h2>Mensagens de renovação</h2>
+<div class="msg-head"><p>Modelos usados no e-mail, na Kommo e no WhatsApp. Clique em uma variável para inserir no campo em foco.</p><button class="b p" onclick="salvarEmailCfg()">Salvar tudo</button></div>
+<div class="vars" aria-label="Variáveis disponíveis">
+<button type="button" class="chip" onclick="inserirVar('{cliente}')">{cliente}</button>
+<button type="button" class="chip" onclick="inserirVar('{tipo}')">{tipo}</button>
+<button type="button" class="chip" onclick="inserirVar('{vencimento}')">{vencimento}</button>
+<button type="button" class="chip" onclick="inserirVar('{quando}')">{quando}</button>
+<button type="button" class="chip" onclick="inserirVar('{dias}')">{dias}</button>
+<button type="button" class="chip" onclick="inserirVar('{valor}')">{valor}</button>
+<button type="button" class="chip" onclick="inserirVar('{link}')">{link}</button>
+<button type="button" class="chip" onclick="inserirVar('{empresa}')">{empresa}</button>
+<button type="button" class="chip" onclick="inserirVar('{remetente}')">{remetente}</button>
+</div>
+<h3>E-mail</h3>
+<label>Assunto<input id="em-assunto" maxlength="200" placeholder="Seu certificado {tipo} {quando}"></label>
+<label>Mensagem<textarea id="em-corpo" maxlength="20000"></textarea></label>
+<h3>WhatsApp</h3>
+<p style="font-size:13px;color:var(--mu)">Usada no botão WhatsApp do cliente e nas notas da régua.</p>
+<textarea id="em-whatsapp" maxlength="20000" aria-label="Mensagem do WhatsApp"></textarea>
+<h3>Kommo CRM</h3>
+<p style="font-size:13px;color:var(--mu)">Usada no botão "Enviar para Kommo" do cliente.</p>
+<textarea id="em-kommo" maxlength="20000" aria-label="Mensagem da Kommo"></textarea>
+<div class="msg-actions"><button class="b p" onclick="salvarEmailCfg()">Salvar tudo</button> <button class="b" onclick="restaurarModelo()">Restaurar padrões</button></div>
+<h3>Remetente e servidor de envio</h3>
+<label>Nome do remetente<input id="em-nome" maxlength="120" placeholder="Equipe de Renovação"></label>
+<label>E-mail do remetente<input id="em-remetente" type="email" maxlength="200" placeholder="renovacao@suaempresa.com.br"></label>
+<label>Responder para (opcional)<input id="em-resposta" type="email" maxlength="200" placeholder="contato@suaempresa.com.br"></label>
+<label>Link de agendamento<input id="em-link" maxlength="500" placeholder="https://suaempresa.com.br/agendar" inputmode="url"></label>
+<label>Servidor SMTP<input id="em-host" maxlength="200" placeholder="smtp.suaempresa.com.br"></label>
+<label>Porta<input id="em-porta" inputmode="numeric" placeholder="587"></label>
+<label>Usuário SMTP<input id="em-usuario" maxlength="200" autocomplete="off" placeholder="renovacao@suaempresa.com.br"></label>
+<label>Senha SMTP<input id="em-senha" type="password" autocomplete="new-password"></label>
+<label>Segurança<select id="em-seguranca"><option value="starttls">STARTTLS (porta 587)</option><option value="ssl">SSL/TLS (porta 465)</option><option value="none">Sem TLS</option></select></label>
+<button class="b p" onclick="salvarEmailCfg()">Salvar envio</button> <button class="b" onclick="limparSenhaEmail()">Limpar senha</button>
+<h3>Teste de envio</h3>
+<label>Enviar teste para<input id="em-teste" type="email" maxlength="200" placeholder="seu@email.com"></label>
+<button class="b" onclick="testarEmail()">Enviar teste</button>
+<p style="font-size:13px;color:var(--mu)">Sem SMTP configurado, o sistema registra o e-mail como simulado no log e continua a régua. A senha fica salva no banco local; deixe o campo vazio para manter a atual.</p>
 </section>
 <section id="s5" hidden class="cfg"><h2>Configurações</h2>
 <h3>Aparência</h3>
@@ -855,8 +1010,17 @@ const ST=[["a_vencer","A vencer","#8f9aa7"],["email_enviado","E-mail enviado","#
 const NM=Object.fromEntries(ST.map(s=>[s[0],s[1]]));
 const PROG={a_vencer:{l:"Aguardando",p:20,c:"#8f9aa7"},email_enviado:{l:"Assinatura Pendente",p:40,c:"#6a8fc2"},whatsapp_enviado:{l:"Aprovação",p:60,c:"#2e9c8e"},agendado:{l:"Em Renovação",p:80,c:"#d6a01e"},emitido:{l:"Emitido",p:100,c:"#8f6cc0"},pago:{l:"Pago",p:100,c:"#2d7d4e"},perdido:{l:"Perdido",p:0,c:"#b4432f"}};
 const el=id=>document.getElementById(id);
+const TEMAS=["auto","light","dark"];
 function temaSalvo(){try{return localStorage.getItem("tema")||"auto"}catch(_){return "auto"}}
-function aplicarTema(v){const r=document.documentElement;if(v==="light"||v==="dark"){r.dataset.theme=v;r.style.colorScheme=v}else{delete r.dataset.theme;r.style.colorScheme=""}try{localStorage.setItem("tema",v)}catch(_){}const s=el("tema");if(s)s.value=v}
+function atualizarBotaoTema(v){const b=el("btn-tema");if(!b)return;b.textContent=v==="light"?"☀️":v==="dark"?"🌙":"🌓";b.title=v==="light"?"Tema claro (clique para escuro)":v==="dark"?"Tema escuro (clique para automático)":"Tema automático (clique para claro)"}
+function aplicarTema(v){const r=document.documentElement;if(v==="light"||v==="dark"){r.dataset.theme=v;r.style.colorScheme=v}else{delete r.dataset.theme;r.style.colorScheme=""}try{localStorage.setItem("tema",v)}catch(_){}const s=el("tema");if(s)s.value=v;atualizarBotaoTema(v)}
+function ciclarTema(){const atual=temaSalvo();aplicarTema(TEMAS[(TEMAS.indexOf(atual)+1)%TEMAS.length])}
+function menuEstado(){try{return localStorage.getItem("menu")||""}catch(_){return ""}}
+function menuFixado(){try{return localStorage.getItem("menu_fixado")==="1"}catch(_){return false}}
+function atualizarBotoesMenu(){const s=document.querySelector(".side");const b=el("btn-menu");if(b&&s){const c=s.classList.contains("collapsed");b.textContent=c?"»":"«";b.title=c?"Expandir menu":"Recolher menu";b.setAttribute("aria-label",b.title)}const p=el("btn-fixar");if(p){const f=menuFixado();p.textContent=f?"📌":"📍";p.style.opacity=f?"1":".6";p.setAttribute("aria-pressed",String(f));p.title=f?"Menu fixado (clique para liberar)":"Fixar menu";p.setAttribute("aria-label",p.title)}}
+function aplicarMenu(){const s=document.querySelector(".side");if(s)s.classList.toggle("collapsed",menuEstado()==="recolhido");atualizarBotoesMenu()}
+function alternarMenu(){const s=document.querySelector(".side");if(!s)return;s.classList.toggle("collapsed");if(menuFixado()){try{localStorage.setItem("menu",s.classList.contains("collapsed")?"recolhido":"aberto")}catch(_){}}atualizarBotoesMenu()}
+function fixarMenu(){const fixado=!menuFixado();try{localStorage.setItem("menu_fixado",fixado?"1":"0");if(fixado){const s=document.querySelector(".side");localStorage.setItem("menu",s&&s.classList.contains("collapsed")?"recolhido":"aberto")}else localStorage.removeItem("menu")}catch(_){}atualizarBotoesMenu();toast(fixado?"Menu fixado.":"Menu liberado.")}
 const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok){let m=r.status+" "+r.statusText;try{m=(await r.json()).erro||m}catch(_){}throw new Error(m)}return r.json()};
 const post=(u,b)=>j(u,{method:"POST",headers:{"X-Requested-With":"fetch",...(b instanceof Blob?{}:{"Content-Type":"application/json"})},body:b instanceof Blob?b:JSON.stringify(b??{})});
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -864,16 +1028,29 @@ const br=s=>s?String(s).slice(8,10)+"/"+String(s).slice(5,7)+"/"+String(s).slice
 const moeda=v=>v==null||v===""?"—":"R$ "+Number(v).toLocaleString("pt-BR",{maximumFractionDigits:2});
 const hj=new Date(),pad=n=>String(n).padStart(2,"0"),hoje=hj.getFullYear()+"-"+pad(hj.getMonth()+1)+"-"+pad(hj.getDate()),mesAtual=hoje.slice(0,7);
 const d30=new Date(hj.getTime()+30*864e5),dia30=d30.getFullYear()+"-"+pad(d30.getMonth()+1)+"-"+pad(d30.getDate());
-let aberto=null,LISTA=[],EU={nome:"local",perfil:"admin"};
+let aberto=null,LISTA=[],EU={nome:"local",perfil:"admin"},CFG={};
+const EMAIL_ASSUNTO_PADRAO_JS="Seu certificado {tipo} {quando}";
+const EMAIL_CORPO_PADRAO_JS="Olá, {cliente}!\n\nSeu certificado digital {tipo} {quando} ({vencimento}).\nPara renovar sem interrupção, agende aqui: {link}\n\nAtenciosamente,\n{empresa}\n";
+const MSG_WHATSAPP_PADRAO_JS="Olá, {cliente}! Seu certificado {tipo} {quando}. Podemos falar sobre a renovação?";
+const MSG_KOMMO_PADRAO_JS="Aviso de renovação: certificado {tipo} de {cliente} {quando} ({vencimento}).";
 function toast(t){const m=el("msg");m.textContent=t;m.classList.add("on");clearTimeout(toast.h);toast.h=setTimeout(()=>m.classList.remove("on"),2800)}
-function aba(n){if(n===6&&EU.perfil!=="admin")return;for(let i=1;i<=6;i++){const s=el("s"+i),m=el("m"+i);if(s)s.hidden=i!=n;if(m)m.setAttribute("aria-current",String(i==n))}if(n===5)cfgLoad();if(n===6)usuarios();if(n===1)renderDashboard();if(n===2)renderAtivos();if(n===3)renderFila();if(n===4)renderHistorico()}
+function diasAte(venc){const a=new Date(String(venc)+"T00:00:00"),b=new Date(hoje+"T00:00:00");return Math.round((a-b)/864e5)}
+function quandoTxt(d){if(d>0)return "vence em "+d+" dia"+(d===1?"":"s");if(d===0)return "vence hoje";const n=-d;return "venceu há "+n+" dia"+(n===1?"":"s")}
+function modelo(texto,x){const d=diasAte(x.vencimento);const v={cliente:x.cliente||"",tipo:x.tipo||"",vencimento:br(x.vencimento),quando:quandoTxt(d),dias:String(d),valor:moeda(x.valor),link:(CFG.email_link||""),empresa:(CFG.email_remetente_nome||""),remetente:(CFG.email_remetente||"")};return String(texto||"").replace(/\{(cliente|tipo|vencimento|quando|dias|valor|link|empresa|remetente)\}/g,(_,k)=>v[k]??"")}
+function zapLink(x){const d=String(x.telefone||"").replace(/\D/g,"");if(d.length<10)return "";const n=d.startsWith("55")&&d.length>=12?d:"55"+d;return "https://wa.me/"+n+"?text="+encodeURIComponent(modelo(CFG.mensagem_whatsapp||MSG_WHATSAPP_PADRAO_JS,x))}
+function abrirWhatsApp(id){const x=LISTA.find(o=>o.id==id);if(!x)return;const u=zapLink(x);if(!u)return toast("Cliente sem telefone válido.");window.open(u,"_blank","noopener")}
+async function enviarKommo(id){try{const r=await post("/api/kommo/mensagem",{id});toast(r.msg);await carregarTudo()}catch(e){toast("Falha: "+e.message)}}
+let ultimoCampo=null;
+document.addEventListener("focusin",e=>{if(e.target&&e.target.tagName==="TEXTAREA")ultimoCampo=e.target});
+function inserirVar(v){const t=ultimoCampo||el("em-corpo");if(!t)return;const s=t.selectionStart??t.value.length,e=t.selectionEnd??s;t.value=t.value.slice(0,s)+v+t.value.slice(e);t.focus();t.selectionStart=t.selectionEnd=s+v.length}
+function aba(n){if(n===6&&EU.perfil!=="admin")return;for(let i=1;i<=7;i++){const s=el("s"+i),m=el("m"+i);if(s)s.hidden=i!=n;if(m)m.setAttribute("aria-current",String(i==n))}if(n===5)cfgLoad();if(n===6)usuarios();if(n===7)emailCfgLoad();if(n===1)renderDashboard();if(n===2)renderAtivos();if(n===3)renderFila();if(n===4)renderHistorico()}
 function progress(s){const p=PROG[s]||{l:NM[s]||s,p:0,c:"#8f9aa7"};return `<span class="progress"><span class="plabel">${p.l}</span><span class="track"><span class="fill" style="width:${p.p}%;background:${p.c}"></span></span></span>`}
-function acoes(x){const b=[];if(x.status==="a_vencer")b.push(`<button class="b p sm" onclick="event.stopPropagation();mudar(${x.id},'email_enviado')">Solicitar Renovação</button>`);else if(x.status==="email_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'whatsapp_enviado')">Enviar Documentos</button>`);else if(x.status==="whatsapp_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'agendado')">Notificar Usuário</button>`);else if(x.status==="agendado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'emitido')">Emitir</button>`);else if(x.status==="emitido")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'pago')">Marcar como pago</button>`);b.push(`<button class="lk" onclick="event.stopPropagation();abrir(${x.id})">Histórico</button>`);return b.join(" ")}
+function acoes(x){const b=[];if(x.status==="a_vencer")b.push(`<button class="b p sm" onclick="event.stopPropagation();mudar(${x.id},'email_enviado')">Solicitar Renovação</button>`);else if(x.status==="email_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'whatsapp_enviado')">Enviar Documentos</button>`);else if(x.status==="whatsapp_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'agendado')">Notificar Usuário</button>`);else if(x.status==="agendado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'emitido')">Emitir</button>`);else if(x.status==="emitido")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'pago')">Marcar como pago</button>`);if(x.telefone)b.push(`<button class="lk" onclick="event.stopPropagation();abrirWhatsApp(${x.id})" title="Abrir WhatsApp">💬</button>`);b.push(`<button class="lk" onclick="event.stopPropagation();abrir(${x.id})">Histórico</button>`);return b.join(" ")}
 function tabela(id,lista,opts={}){const cols=opts.cols||["Cliente","Tipo","Vencimento","Valor","Progresso","Ações"];el(id).innerHTML="<tr>"+cols.map(c=>`<th>${c}</th>`).join("")+"</tr>"+(lista.map(x=>`<tr class="${x.id==aberto?"sel":""}" onclick="abrir(${x.id})"><td>${esc(x.cliente)}</td><td>${esc(x.tipo)}</td><td>${br(x.vencimento)}</td><td>${moeda(x.valor)}</td>${opts.status?`<td>${NM[x.status]||x.status}</td>`:`<td>${progress(x.status)}</td>`}<td>${opts.acoes===false?"":acoes(x)}</td></tr>`).join("")||`<tr><td colspan="${cols.length}">Nenhum registro.</td></tr>`)}
 function calcStats(L){const done=s=>["emitido","pago","perdido"].includes(s);return{vencidos:L.filter(x=>x.vencimento<hoje&&!done(x.status)).length,a_vencer:L.filter(x=>x.vencimento>=hoje&&x.vencimento<=dia30&&!done(x.status)).length,em_renovacao:L.filter(x=>["email_enviado","whatsapp_enviado","agendado"].includes(x.status)).length,renovados_mes:L.filter(x=>["emitido","pago"].includes(x.status)&&x.vencimento.startsWith(mesAtual)).length}}
 function renderDashboard(){const L=LISTA||[];const st=calcStats(L);el("c-vencidos").textContent=st.vencidos;el("c-vencer").textContent=st.a_vencer;el("c-renovacao").textContent=st.em_renovacao;el("c-renovados").textContent=st.renovados_mes;const pend=L.filter(x=>!["emitido","pago","perdido"].includes(x.status)).sort((a,b)=>a.vencimento<b.vencimento?-1:1);tabela("tab",pend);if(aberto){const x=L.find(o=>o.id==aberto);if(x)detalhe(x);else{aberto=null;detalheVazio()}}else detalheVazio()}
-function detalheVazio(){el("d-tit").textContent="Selecione uma renovação";el("steps").innerHTML="";el("d-info").innerHTML="<p style='color:var(--mu);font-size:13px'>Clique em uma linha para ver os detalhes.</p>";el("d-hist").innerHTML=""}
-function detalhe(x){const passos=["Solicitação","Validação","Emissão","Instalação"];const idx={a_vencer:0,email_enviado:1,whatsapp_enviado:2,agendado:3,emitido:4,pago:4,perdido:4}[x.status]??0;el("d-tit").textContent=`Renovação ${x.tipo} - ${x.cliente}`;el("steps").innerHTML=passos.map((p,i)=>{const done=i<idx,active=i===idx&&!done;return `<li class="${done?"done":active?"active":""}"><span class="dot">${done?"✓":i+1}</span><span><span class="st">${p}</span><br><span class="sd">${done?"Concluído":active?"Em andamento":"Aguardando"}</span></span></li>`}).join("");el("d-info").innerHTML=`<div><span>Vencimento</span><b>${br(x.vencimento)}</b></div><div><span>Valor</span><b>${moeda(x.valor)}</b></div><div><span>Status</span><b>${NM[x.status]||x.status}</b></div>${x.email?`<div><span>E-mail</span><b>${esc(x.email)}</b></div>`:""}${x.telefone?`<div><span>Telefone</span><b>${esc(x.telefone)}</b></div>`:""}`;j("/api/historico?id="+x.id).then(e=>{el("d-hist").innerHTML=e.length?e.map(v=>`<li><time>${esc(String(v.ts).replace("T"," "))}</time>${esc(v.tipo)}${v.canal?" · "+esc(v.canal):""}${v.resultado?" · "+esc(v.resultado):""}</li>`).join(""):"<li>Sem eventos.</li>"}).catch(()=>{})}
+function detalheVazio(){el("d-tit").textContent="Selecione uma renovação";el("steps").innerHTML="";el("d-info").innerHTML="<p style='color:var(--mu);font-size:13px'>Clique em uma linha para ver os detalhes.</p>";el("d-email").innerHTML="";el("d-msg").innerHTML="";el("d-hist").innerHTML=""}
+function detalhe(x){const passos=["Solicitação","Validação","Emissão","Instalação"];const idx={a_vencer:0,email_enviado:1,whatsapp_enviado:2,agendado:3,emitido:4,pago:4,perdido:4}[x.status]??0;el("d-tit").textContent=`Renovação ${x.tipo} - ${x.cliente}`;el("steps").innerHTML=passos.map((p,i)=>{const done=i<idx,active=i===idx&&!done;return `<li class="${done?"done":active?"active":""}"><span class="dot">${done?"✓":i+1}</span><span><span class="st">${p}</span><br><span class="sd">${done?"Concluído":active?"Em andamento":"Aguardando"}</span></span></li>`}).join("");el("d-info").innerHTML=`<div><span>Vencimento</span><b>${br(x.vencimento)}</b></div><div><span>Valor</span><b>${moeda(x.valor)}</b></div><div><span>Status</span><b>${NM[x.status]||x.status}</b></div>${x.email?`<div><span>E-mail importado</span><b>${esc(x.email)}</b></div>`:""}${x.telefone?`<div><span>Telefone</span><b>${esc(x.telefone)}</b></div>`:""}`;const imp=x.email?esc(x.email):"",outro=!!x.email_envio||!x.email;el("d-email").innerHTML=`<h3 style="margin-top:14px">E-mail de envio</h3><label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0"><input type="checkbox" id="em-ativo" ${Number(x.enviar_email??1)!==0?"checked":""}> Enviar e-mails de renovação</label><label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0"><input type="radio" name="em-dest" value="importado" onchange="emTipo()" ${outro?"":"checked"}> Usar importado: <b>${imp||"sem e-mail"}</b></label><label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0"><input type="radio" name="em-dest" value="outro" onchange="emTipo()" ${outro?"checked":""}> Outro e-mail</label><input id="em-outro" type="email" placeholder="email@cliente.com" value="${esc(x.email_envio||"")}" ${outro?"":"disabled"} style="width:100%;margin:4px 0 8px"><button class="b sm" onclick="salvarEmailCliente(${x.id})">Salvar e-mail</button>`;el("d-msg").innerHTML=`<div class="d-actions"><button class="b sm" onclick="abrirWhatsApp(${x.id})">WhatsApp</button><button class="b sm" onclick="enviarKommo(${x.id})">Enviar para Kommo</button></div>`;j("/api/historico?id="+x.id).then(e=>{el("d-hist").innerHTML=e.length?e.map(v=>`<li><time>${esc(String(v.ts).replace("T"," "))}</time>${esc(v.tipo)}${v.canal?" · "+esc(v.canal):""}${v.resultado?" · "+esc(v.resultado):""}</li>`).join(""):"<li>Sem eventos.</li>"}).catch(()=>{})}
 async function abrir(id){aberto=id;renderDashboard()}
 async function mudar(id,status){try{await post("/api/avancar",{id,status});toast("Status atualizado: "+NM[status]);await carregarTudo()}catch(e){toast("Falha ao atualizar: "+e.message)}}
 async function regua(){try{const r=await post("/api/regua",{});toast(r.notificadas?`${r.notificadas} ${r.notificadas===1?"renovação notificada":"renovações notificadas"}.`:"Nenhum aviso novo: nada venceu ou o intervalo de 7 dias ainda não foi atingido.");await carregarTudo()}catch(e){toast("Falha na régua: "+e.message)}}
@@ -884,12 +1061,20 @@ async function carregarTudo(){try{LISTA=await j("/api/renovacoes");renderDashboa
 async function cfgLoad(){
  try{
   el("tema").value=temaSalvo();
-  const c=await j("/api/config");el("cu").value=c.url||"";el("cp").value=c.pipeline||"";el("ct").value="";
+  const c=await j("/api/config");CFG=Object.assign(CFG,c);el("cu").value=c.url||"";el("cp").value=c.pipeline||"";el("ct").value="";
   el("ct").placeholder=c.token_definido?"(salvo; deixe vazio para manter)":"token de longa duração";
   el("ce").innerHTML=ST.map(s=>`<label>${s[1]}<input id="e_${s[0]}" inputmode="numeric" value="${esc((c.etapas||{})[s[0]]??"")}"></label>`).join("");
   el("wh").textContent=location.origin+"/webhook/kommo";
  }catch(e){toast("Falha ao carregar configurações: "+e.message)}
 }
+function emTipo(){const o=document.querySelector('input[name="em-dest"][value="outro"]');const i=el("em-outro");if(i)i.disabled=!(o&&o.checked)}
+async function salvarEmailCliente(id){const ativo=el("em-ativo").checked;const outro=document.querySelector('input[name="em-dest"][value="outro"]')?.checked;const email_envio=outro?el("em-outro").value.trim():"";if(outro&&!email_envio)return toast("Informe o e-mail alternativo.");try{await post("/api/renovacoes/email",{id,enviar_email:ativo,email_envio});toast("E-mail de envio atualizado.");await carregarTudo()}catch(e){toast("Falha: "+e.message)}}
+async function emailCfgLoad(){try{const c=await j("/api/config");CFG=Object.assign(CFG,c);el("em-assunto").value=c.email_assunto||"";el("em-corpo").value=c.email_corpo||"";el("em-whatsapp").value=c.mensagem_whatsapp||"";el("em-kommo").value=c.mensagem_kommo||"";el("em-nome").value=c.email_remetente_nome||"";el("em-remetente").value=c.email_remetente||"";el("em-resposta").value=c.email_resposta||"";el("em-link").value=c.email_link||"";el("em-host").value=c.smtp_host||"";el("em-porta").value=c.smtp_port||"587";el("em-usuario").value=c.smtp_usuario||"";el("em-seguranca").value=c.smtp_seguranca||"starttls";el("em-senha").value="";el("em-senha").placeholder=c.smtp_senha_definida?"(salva; deixe vazio para manter)":"senha SMTP"}catch(e){toast("Falha ao carregar mensagens: "+e.message)}}
+async function salvarEmailCfg(){const d={email_assunto:el("em-assunto").value.trim(),email_corpo:el("em-corpo").value,mensagem_whatsapp:el("em-whatsapp").value,mensagem_kommo:el("em-kommo").value,email_remetente_nome:el("em-nome").value.trim(),email_remetente:el("em-remetente").value.trim(),email_resposta:el("em-resposta").value.trim(),email_link:el("em-link").value.trim(),smtp_host:el("em-host").value.trim(),smtp_port:el("em-porta").value.trim(),smtp_usuario:el("em-usuario").value.trim(),smtp_seguranca:el("em-seguranca").value};const senha=el("em-senha").value;if(senha)d.smtp_senha=senha;try{await post("/api/config",d);el("em-senha").value="";toast("Mensagens e envio salvos.");emailCfgLoad()}catch(e){toast("Falha: "+e.message)}}
+async function limparSenhaEmail(){if(!confirm("Remover a senha SMTP salva?"))return;try{await post("/api/config",{limpar_smtp_senha:true});el("em-senha").value="";toast("Senha removida.");emailCfgLoad()}catch(e){toast("Falha: "+e.message)}}
+function restaurarModelo(){if(!confirm("Restaurar os modelos padrão de mensagem?"))return;el("em-assunto").value=EMAIL_ASSUNTO_PADRAO_JS;el("em-corpo").value=EMAIL_CORPO_PADRAO_JS;el("em-whatsapp").value=MSG_WHATSAPP_PADRAO_JS;el("em-kommo").value=MSG_KOMMO_PADRAO_JS;toast("Modelos padrão carregados. Clique em Salvar tudo para aplicar.")}
+async function carregarCfg(){try{CFG=await j("/api/config")}catch(_){}}
+async function testarEmail(){const para=el("em-teste").value.trim();if(!para)return toast("Informe o e-mail para o teste.");try{const r=await post("/api/email/testar",{para});toast(r.msg)}catch(e){toast("Falha: "+e.message)}}
 async function salvar(){
  const etapas={};ST.forEach(s=>{const v=el("e_"+s[0]).value.trim();if(v)etapas[s[0]]=Number(v)});
  const url=el("cu").value.trim();if(url&&!/^https?:\/\//i.test(url))return toast("A URL deve começar com https://");
@@ -906,7 +1091,7 @@ async function cadastrarCert(){const f=el("uf").files[0];if(!f)return toast("Esc
 function novo(){el("modal").hidden=false;el("nv-cliente").value="";el("nv-tipo").value="e-CNPJ A1";el("nv-venc").value="";el("nv-valor").value="";el("nv-email").value="";el("nv-tel").value="";el("nv-cliente").focus()}
 function fecharModal(){el("modal").hidden=true}
 async function salvarNovo(){const cliente=el("nv-cliente").value.trim(),tipo=el("nv-tipo").value,vencimento=el("nv-venc").value;if(!cliente||!vencimento)return toast("Informe cliente e vencimento.");const valor=el("nv-valor").value.trim(),email=el("nv-email").value.trim(),telefone=el("nv-tel").value.trim();try{await post("/api/renovacoes",{cliente,tipo,vencimento,valor:valor||undefined,email,telefone});fecharModal();toast("Renovação criada.");await carregarTudo()}catch(e){toast("Falha: "+e.message)}}
-aplicarTema(temaSalvo());carregarEu();carregarTudo();
+aplicarTema(temaSalvo());aplicarMenu();carregarEu();carregarCfg();carregarTudo();
 </script></body></html>
 """
 
@@ -1034,7 +1219,20 @@ class H(BaseHTTPRequestHandler):
                 "SELECT id,nome,email,perfil,sujeito,validade,ativo FROM usuarios ORDER BY nome")])
         if u.path == "/api/config":
             return self._send({"url": K["url"], "pipeline": K["pipeline"], "etapas": K["etapas"],
-                               "token_definido": bool(K["token"])})
+                               "token_definido": bool(K["token"]),
+                               "email_assunto": K.get("email_assunto", ""),
+                               "email_corpo": K.get("email_corpo", ""),
+                               "email_remetente_nome": K.get("email_remetente_nome", ""),
+                               "email_remetente": K.get("email_remetente", ""),
+                               "email_resposta": K.get("email_resposta", ""),
+                               "email_link": K.get("email_link", ""),
+                               "mensagem_whatsapp": K.get("mensagem_whatsapp", ""),
+                               "mensagem_kommo": K.get("mensagem_kommo", ""),
+                               "smtp_host": K.get("smtp_host", ""),
+                               "smtp_port": K.get("smtp_port", ""),
+                               "smtp_usuario": K.get("smtp_usuario", ""),
+                               "smtp_seguranca": K.get("smtp_seguranca", "starttls"),
+                               "smtp_senha_definida": bool(K.get("smtp_senha"))})
         return self._send({"erro": "não encontrado"}, code=404)
 
     def do_POST(self):
@@ -1077,6 +1275,12 @@ class H(BaseHTTPRequestHandler):
 
         if p == "/api/renovacoes":
             return self._criar_renovacao(d)
+        if p == "/api/renovacoes/email":
+            return self._email_renovacao(d)
+        if p == "/api/email/testar":
+            return self._testar_email(d)
+        if p == "/api/kommo/mensagem":
+            return self._mensagem_kommo(d)
         if p == "/api/avancar":
             try:
                 rid = int(d.get("id"))
@@ -1160,8 +1364,92 @@ class H(BaseHTTPRequestHandler):
         log(row["id"], "criado", "painel")
         return self._send(row, code=201)
 
+    def _email_renovacao(self, d):
+        try:
+            rid = int(d.get("id"))
+        except (TypeError, ValueError):
+            return self._send({"erro": "id inválido"}, code=400)
+        if not db().execute("SELECT id FROM renovacoes WHERE id=?", (rid,)).fetchone():
+            return self._send({"erro": "renovação não encontrada"}, code=404)
+        ativo = 0 if d.get("enviar_email") in (False, 0, "0", "false", "False") else 1
+        email_envio = str(d.get("email_envio") or "").strip()[:200] or None
+        if email_envio and not EMAIL_RE.match(email_envio):
+            return self._send({"erro": "informe um e-mail válido para o envio"}, code=400)
+        db().execute("UPDATE renovacoes SET enviar_email=?, email_envio=? WHERE id=?",
+                     (ativo, email_envio, rid))
+        log(rid, "email_config", "painel", "salvo",
+            f"enviar={'sim' if ativo else 'não'} destino={email_envio or 'importado'}")
+        return self._send(_dict(db().execute("SELECT * FROM renovacoes WHERE id=?", (rid,)).fetchone()))
+
+    def _testar_email(self, d):
+        para = str(d.get("para") or "").strip()[:200]
+        if not para or not EMAIL_RE.match(para):
+            return self._send({"erro": "informe um e-mail de teste válido"}, code=400)
+        exemplo = {"id": 0, "cliente": "Cliente de teste", "tipo": "e-CNPJ A1",
+                   "vencimento": date.today().isoformat(), "valor": 0,
+                   "email": para, "email_envio": None, "enviar_email": 1}
+        ok, _ = enviar_email(exemplo, 30, log_evento=False)
+        if ok and not K.get("smtp_host"):
+            return self._send({"ok": True, "msg": "Sem servidor SMTP configurado: modo simulação (veja o log do servidor)."})
+        return self._send({"ok": ok, "msg": "Teste enviado." if ok else "Falha no envio; veja o log do servidor."})
+
+    def _mensagem_kommo(self, d):
+        try:
+            rid = int(d.get("id"))
+        except (TypeError, ValueError):
+            return self._send({"erro": "id inválido"}, code=400)
+        r = db().execute("SELECT * FROM renovacoes WHERE id=?", (rid,)).fetchone()
+        if not r:
+            return self._send({"erro": "renovação não encontrada"}, code=404)
+        try:
+            dias = (date.fromisoformat(r["vencimento"]) - date.today()).days
+        except (TypeError, ValueError):
+            dias = 0
+        texto = _render_modelo(K.get("mensagem_kommo") or MENSAGEM_KOMMO_PADRAO, r, dias).strip()
+        if not texto:
+            return self._send({"erro": "mensagem da Kommo vazia"}, code=400)
+        ok = sync_kommo(rid, nota=texto)
+        log(rid, "kommo", "kommo", "mensagem" if ok else "falhou", texto[:300])
+        return self._send({"ok": ok, "msg": "Mensagem enviada para a Kommo." if ok else "Falha ao enviar para a Kommo."})
+
     def _config(self, d):
         with _cfg_lock:
+            campos_email = {"email_assunto": 200, "email_remetente_nome": 120,
+                            "email_remetente": 200, "email_resposta": 200,
+                            "email_link": 500, "smtp_host": 200, "smtp_usuario": 200}
+            for chave, limite in campos_email.items():
+                if chave in d:
+                    valor = str(d.get(chave) or "").strip()[:limite]
+                    if chave in ("email_remetente", "email_resposta") and valor and not EMAIL_RE.match(valor):
+                        return self._send({"erro": f"{chave} inválido"}, code=400)
+                    if chave == "email_link" and valor and not valor.lower().startswith(("http://", "https://")):
+                        return self._send({"erro": "o link deve começar com http:// ou https://"}, code=400)
+                    db().execute("INSERT OR REPLACE INTO config VALUES(?,?)", (chave, valor))
+            if "email_corpo" in d:
+                corpo = str(d.get("email_corpo") or "")
+                if len(corpo) > 20000:
+                    return self._send({"erro": "mensagem do e-mail grande demais"}, code=400)
+                db().execute("INSERT OR REPLACE INTO config VALUES('email_corpo',?)", (corpo,))
+            for chave in ("mensagem_whatsapp", "mensagem_kommo"):
+                if chave in d:
+                    texto = str(d.get(chave) or "")
+                    if len(texto) > 20000:
+                        return self._send({"erro": "mensagem grande demais"}, code=400)
+                    db().execute("INSERT OR REPLACE INTO config VALUES(?,?)", (chave, texto))
+            if "smtp_port" in d:
+                porta = str(d.get("smtp_port") or "").strip()
+                if porta and (not porta.isdigit() or not (1 <= int(porta) <= 65535)):
+                    return self._send({"erro": "porta SMTP inválida"}, code=400)
+                db().execute("INSERT OR REPLACE INTO config VALUES('smtp_port',?)", (porta,))
+            if "smtp_seguranca" in d:
+                seguranca = str(d.get("smtp_seguranca") or "").strip().lower()
+                if seguranca not in ("starttls", "ssl", "none"):
+                    return self._send({"erro": "segurança SMTP inválida"}, code=400)
+                db().execute("INSERT OR REPLACE INTO config VALUES('smtp_seguranca',?)", (seguranca,))
+            if d.get("smtp_senha"):
+                db().execute("INSERT OR REPLACE INTO config VALUES('smtp_senha',?)", (str(d["smtp_senha"]),))
+            if d.get("limpar_smtp_senha"):
+                db().execute("DELETE FROM config WHERE chave='smtp_senha'")
             if "url" in d:
                 url = str(d.get("url") or "").strip()
                 if url and not url.lower().startswith(("http://", "https://")):

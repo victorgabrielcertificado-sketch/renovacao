@@ -28,6 +28,8 @@ def limpar():
     R.db().execute("DELETE FROM renovacoes")
     R.db().execute("DELETE FROM eventos")
     R.db().execute("DELETE FROM usuarios")
+    R.db().execute("DELETE FROM config")
+    R.carregar_cfg()
 
 
 def gerar_cert(cn="Ana", dias_ini=-1, dias_fim=365):
@@ -362,6 +364,76 @@ class Http(unittest.TestCase):
                                         {"cliente": "", "tipo": "e-CNPJ A1", "vencimento": "2027-01-15"})[0], 400)
         self.assertEqual(self.post_json("/api/renovacoes",
                                         {"cliente": "Nova", "tipo": "e-CNPJ A1", "vencimento": "2027-13-99"})[0], 400)
+
+    def test_email_por_cliente(self):
+        rid = lead("Cliente Email", date(2027, 5, 1), email="importado@cliente.com")
+        status, _, resp = self.post_json("/api/renovacoes/email",
+                                         {"id": rid, "enviar_email": False,
+                                          "email_envio": "outro@cliente.com"})
+        self.assertEqual(status, 200)
+        row = R.db().execute("SELECT enviar_email, email_envio FROM renovacoes WHERE id=?", (rid,)).fetchone()
+        self.assertEqual(row[0], 0)
+        self.assertEqual(row[1], "outro@cliente.com")
+        self.assertEqual(self.post_json("/api/renovacoes/email",
+                                        {"id": rid, "enviar_email": True,
+                                         "email_envio": "invalido"})[0], 400)
+        self.assertEqual(self.post_json("/api/renovacoes/email",
+                                        {"id": 99999, "enviar_email": True})[0], 404)
+        # volta a usar o e-mail importado
+        status, _, _ = self.post_json("/api/renovacoes/email",
+                                      {"id": rid, "enviar_email": True, "email_envio": ""})
+        self.assertEqual(status, 200)
+        self.assertEqual(R.db().execute("SELECT email_envio FROM renovacoes WHERE id=?", (rid,)).fetchone()[0], None)
+
+    def test_config_email(self):
+        status, _, _ = self.post_json("/api/config", {
+            "email_assunto": "Aviso {cliente}",
+            "email_corpo": "Olá {cliente}, vence {quando}.",
+            "email_remetente_nome": "Empresa X",
+            "email_remetente": "renovacao@empresa.com",
+            "email_resposta": "contato@empresa.com",
+            "email_link": "https://empresa.com/agendar",
+            "mensagem_whatsapp": "Olá {cliente}, falamos do certificado?",
+            "mensagem_kommo": "Lead {cliente}: {tipo} {quando}",
+            "smtp_host": "smtp.empresa.com",
+            "smtp_port": "587",
+            "smtp_usuario": "renovacao@empresa.com",
+            "smtp_seguranca": "starttls",
+            "smtp_senha": "segredo",
+        })
+        self.assertEqual(status, 200)
+        status, _, corpo = self.req("/api/config")
+        self.assertEqual(status, 200)
+        c = json.loads(corpo)
+        self.assertEqual(c["email_assunto"], "Aviso {cliente}")
+        self.assertEqual(c["email_remetente"], "renovacao@empresa.com")
+        self.assertEqual(c["mensagem_whatsapp"], "Olá {cliente}, falamos do certificado?")
+        self.assertEqual(c["mensagem_kommo"], "Lead {cliente}: {tipo} {quando}")
+        self.assertTrue(c["smtp_senha_definida"])
+        self.assertNotIn("segredo", corpo.decode())
+        # validações
+        self.assertEqual(self.post_json("/api/config", {"email_remetente": "x"})[0], 400)
+        self.assertEqual(self.post_json("/api/config", {"smtp_port": "99999"})[0], 400)
+        self.assertEqual(self.post_json("/api/config", {"smtp_seguranca": "tls"})[0], 400)
+        self.assertEqual(self.post_json("/api/config", {"email_link": "ftp://x"})[0], 400)
+        # limpa a senha
+        self.assertEqual(self.post_json("/api/config", {"limpar_smtp_senha": True})[0], 200)
+        self.assertFalse(json.loads(self.req("/api/config")[2])["smtp_senha_definida"])
+
+    def test_email_teste(self):
+        status, _, resp = self.post_json("/api/email/testar", {"para": "teste@empresa.com"})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(resp)["ok"])
+        self.assertEqual(self.post_json("/api/email/testar", {"para": "invalido"})[0], 400)
+
+    def test_mensagem_kommo(self):
+        rid = lead("Cliente Kommo", date(2027, 1, 1))
+        status, _, resp = self.post_json("/api/kommo/mensagem", {"id": rid})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(resp)["ok"])
+        self.assertTrue(eventos(rid, "kommo"))
+        self.assertEqual(self.post_json("/api/kommo/mensagem", {"id": 99999})[0], 404)
+        self.assertEqual(self.post_json("/api/kommo/mensagem", {"id": "x"})[0], 400)
 
     def test_metricas_mes_invalido(self):
         self.assertEqual(self.req("/api/metricas?mes=2026-13")[0], 400)

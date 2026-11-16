@@ -54,7 +54,7 @@ Em outro terminal:
 
 ```bash
 npm test              # 12 testes unitários (planilha, datas, validade, certificado, auth)
-npm run test:api      # 23 verificações de integração (servidor precisa estar rodando)
+npm run test:api      # 28 verificações de integração (servidor precisa estar rodando)
 ```
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
@@ -91,6 +91,8 @@ npx wrangler d1 execute renovacao --remote --file=schema.sql
 npx wrangler d1 execute renovacao --remote --file=migrations/2026-11-11-senha-usuarios.sql
 # Se o banco já existia antes do aviso de e-mail em D30:
 npx wrangler d1 execute renovacao --remote --file=migrations/2026-11-12-ultimo-email.sql
+# Se o banco já existia antes do e-mail de envio por cliente:
+npx wrangler d1 execute renovacao --remote --file=migrations/2026-11-13-email-por-cliente.sql
 ```
 
 > Se `--file` falhar com `Authentication error [code: 10000]`, aplique a migração com `--command`
@@ -128,9 +130,13 @@ npx wrangler pages secret put EMAIL_FROM --project-name renovacao
 | `SESSION_SECRET` | chave HMAC do cookie de sessão (opcional; padrão: `PAINEL_SENHA`) |
 | `WEBHOOK_TOKEN` | token exigido em `/webhook/kommo?t=...` |
 | `CRON_TOKEN` | token para `POST /api/regua?t=...` (régua automática) |
-| `RESEND_API_KEY` | envio real de e-mail via Resend |
+| `RESEND_API_KEY` | envio real de e-mail via Resend (também pode ser salva na aba **Mensagens**) |
 | `EMAIL_FROM` | remetente verificado no Resend |
-| `LINK_AGENDA` | link no corpo do e-mail |
+| `EMAIL_REMETENTE_NOME` | nome exibido no remetente (padrão `Equipe de Renovação`) |
+| `EMAIL_RESPOSTA` | endereço de resposta (opcional) |
+| `EMAIL_ASSUNTO`, `EMAIL_CORPO` | modelo do e-mail (a aba **Mensagens** tem prioridade) |
+| `MENSAGEM_WHATSAPP`, `MENSAGEM_KOMMO` | modelos de WhatsApp e Kommo (a aba **Mensagens** tem prioridade) |
+| `LINK_AGENDA` | link usado nas mensagens |
 | `TRUST_ACCESS` | `1` para confiar no e-mail do Cloudflare Access |
 | `AUTH_CERT` | `1` para aceitar certificado no cabeçalho |
 | `CERT_HEADER` | nome do cabeçalho do certificado (padrão `X-Client-Cert`) |
@@ -160,10 +166,12 @@ O painel exige sessão. O formulário troca usuário/senha por um **cookie de se
 - **Admin de emergência:** `PAINEL_USER` + `PAINEL_SENHA` (também aceito no Basic Auth).
 - **Usuários individuais:** cadastrados na aba **Usuários** com nome, e-mail, perfil e senha.
   O login aceita o **nome** ou o **e-mail** cadastrado.
-- **Perfis:** `admin` vê todas as abas; `operador` vê **Renovações** e **Configurações**
-  (importação de planilha e integração Kommo), mas a aba **Usuários** é exclusiva de `admin`.
-- **Tema:** em **Configurações → Aparência** o usuário escolhe **Automático**, **Claro** ou
-  **Escuro**; a preferência fica salva no navegador (`localStorage`).
+- **Perfis:** `admin` vê todas as abas; `operador` vê **Renovações**, **Mensagens** e
+  **Configurações** (importação de planilha e integração Kommo), mas a aba **Usuários** é exclusiva
+  de `admin`.
+- **Tema e menu:** o botão no canto superior alterna **Automático → Claro → Escuro**; o menu lateral
+  pode ser recolhido e fixado pelos botões ao lado do título. As duas preferências ficam salvas no
+  navegador (`localStorage`).
 - As senhas são gravadas como hash **PBKDF2-SHA256 com salt**; nunca em texto puro.
 - O admin pode redefinir a senha de qualquer usuário pelo botão **Senha** na lista.
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).
@@ -367,7 +375,7 @@ export default {
 A régua é idempotente: o e-mail começa em D30 e se repete a cada 7 dias até a renovação ser concluída
 (`emitido`/`pago`/`perdido`); o WhatsApp dispara uma vez em cada limiar antigo (D60, D30, D15, D7, D1, D-3).
 
-## E-mail
+## Mensagens
 
 Workers não abrem conexão SMTP. Esta versão usa a API HTTP do **Resend**:
 
@@ -376,8 +384,23 @@ RESEND_API_KEY=re_...
 EMAIL_FROM=renovacao@seudominio.com.br
 ```
 
-Sem `RESEND_API_KEY`, o envio é **simulado** (o evento é gravado como enviado, mas nada sai).
-Valide o domínio no Resend para o remetente funcionar.
+A aba **Mensagens** reúne três modelos com as mesmas variáveis: `{cliente}`, `{tipo}`,
+`{vencimento}`, `{quando}`, `{dias}`, `{valor}`, `{link}`, `{empresa}` e `{remetente}`. Clique em
+uma variável para inseri-la no campo em foco.
+
+- **E-mail:** assunto e corpo enviados pela régua e pelo teste.
+- **WhatsApp:** usada no botão **WhatsApp** do cliente (abre o `wa.me` com o texto pronto) e nas
+  notas da régua.
+- **Kommo CRM:** usada no botão **Enviar para Kommo** do cliente, que cria uma nota no lead.
+
+A aba também configura o remetente (nome, e-mail, responda-para e link de agendamento), salva a
+chave da Resend e envia um teste. Nos **dados do cliente**, o painel mostra o e-mail importado e
+permite ativar/desativar os avisos, cadastrar um **e-mail alternativo** de envio, abrir o WhatsApp
+ou enviar a mensagem para a Kommo. A régua usa o alternativo quando existe; se o envio estiver
+desativado, o cliente é ignorado. A importação não sobrescreve o e-mail alternativo.
+
+Sem `RESEND_API_KEY` (ou chave salva no painel), o envio é **simulado** (o evento é gravado como
+enviado, mas nada sai). Valide o domínio no Resend para o remetente funcionar.
 
 ## Webhook da Kommo
 

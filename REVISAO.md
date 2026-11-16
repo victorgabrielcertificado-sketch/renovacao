@@ -5,7 +5,7 @@ Arquivos entregues nesta pasta:
 | Arquivo | O que é |
 |---|---|
 | `renovacao.py` | protótipo corrigido (mesma estrutura/comandos do original) |
-| `testes.py` | 33 testes automatizados (importação, régua, métricas, HTTP/webhook) |
+| `testes.py` | 38 testes automatizados (importação, régua, métricas, HTTP/webhook, mensagens) |
 | `REVISAO.md` | este relatório |
 
 Ambiente preparado nesta máquina: **Python 3.12.10** (winget) + **pandas 3.1.1** + **openpyxl 3.1.5**.
@@ -14,7 +14,7 @@ Ambiente preparado nesta máquina: **Python 3.12.10** (winget) + **pandas 3.1.1*
 cd renovacao
 python renovacao.py demo        # gera certificados_exemplo.xlsx, importa e roda a régua
 python renovacao.py serve       # painel em http://localhost:8000
-python testes.py -v             # 33 testes
+python testes.py -v             # 38 testes
 ```
 
 > Se `python` não for reconhecido, abra um terminal novo (o winget atualiza o PATH) ou use
@@ -141,18 +141,40 @@ Recursos adicionados depois da revisão inicial:
   só é aceito quando `X-Proxy-Secret` confere com `PROXY_SECRET`.
 - Rotas `/api/eu`, `/api/usuarios` (GET/POST), `/api/usuarios/ativo` e `/api/usuarios/remover`.
 - Aba **Usuários** no painel: lista, ativa/desativa, remove e cadastra certificados.
-- Perfis `admin` e `operador`: operador acessa Renovações e Configurações (importação e Kommo),
-  mas não acessa a aba/rotas de Usuários (GET e POST).
+- Perfis `admin` e `operador`: operador acessa Renovações, Mensagens e Configurações (importação e
+  Kommo), mas não acessa a aba/rotas de Usuários (GET e POST).
 - Com `AUTH_CERT=1` o app escuta só em `127.0.0.1`; o proxy (nginx) é quem fica exposto e exige o
   certificado no TLS.
 - Primeiro administrador: subir com `PAINEL_SENHA` (login de emergência), cadastrar o certificado
   admin e depois remover a senha se desejar.
 
+## Atualização: mensagens e polimento da UI
+
+- Aba **Mensagens** (antes **E-mails**) com três modelos: **e-mail**, **WhatsApp** e **Kommo CRM**.
+  Todos usam `{cliente}`, `{tipo}`, `{vencimento}`, `{quando}`, `{dias}`, `{valor}`, `{link}`,
+  `{empresa}` e `{remetente}`; os chips inserem a variável no campo em foco.
+- O e-mail continua sendo enviado pela régua (SMTP no Python, Resend no Cloudflare). O modelo de
+  WhatsApp abre o `wa.me` com o texto pronto no botão **WhatsApp** do cliente e também alimenta as
+  notas da régua. O modelo da Kommo é usado pelo botão **Enviar para Kommo**.
+- Novo endpoint `POST /api/kommo/mensagem` cria a nota no lead com o modelo configurado e registra
+  o evento no histórico.
+- **Remetente e envio:** nome, e-mail, responda-para e link de agendamento; SMTP no Python e chave
+  da Resend no Cloudflare. A senha/chave nunca é devolvida pela API.
+- **Por cliente:** ativar/desativar avisos, escolher o e-mail importado ou um alternativo, abrir o
+  WhatsApp e enviar a mensagem para a Kommo. A importação preserva a escolha já feita.
+- **Menu lateral recolhível** com botão de **fixar** (persistido em `localStorage`) e **botão de
+  tema no canto superior** (Automático → Claro → Escuro). O layout mobile continua em barra
+  horizontal.
+- Schema/migração: `renovacoes.email_envio` e `renovacoes.enviar_email`; chaves de config
+  `email_assunto`, `email_corpo`, `mensagem_whatsapp`, `mensagem_kommo`, remetente e SMTP/Resend.
+
 ## Validação executada
 
 - `python -m py_compile renovacao.py testes.py` → OK
-- `python testes.py -v` → **27 testes, todos OK** (inclui certificado válido, vencido, inativo,
-  operador × admin, cadastro PEM/DER/PFX e senha errada)
+- `python testes.py -v` → **38 testes, todos OK** (inclui certificado válido, vencido, inativo,
+  operador × admin, cadastro PEM/DER/PFX, senha errada, modelos de mensagem e Kommo)
 - Teste manual do painel no navegador: renderização, troca de status, histórico, abas de
-  configurações/usuários e webhook (token certo/errado) — OK
-- JavaScript embutido validado com `node --check` → OK
+  configurações/usuários, menu recolhido/fixado, tema no canto, aba Mensagens, chips de variáveis
+  e webhook (token certo/errado) — OK
+- JavaScript embutido validado com `node --check`/`new Function` → OK
+- Cloudflare: `npm test` → **12 testes OK**; `npm run test:api` → **28 verificações OK**

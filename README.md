@@ -59,9 +59,12 @@ Sem elas, e-mail e Kommo rodam em **modo simulação** (só imprimem no console)
 
 | Variável | Descrição |
 |---|---|
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | envio de e-mail |
-| `SMTP_TLS=0` | desliga STARTTLS (porta 587) |
-| `LINK_AGENDA` | link de agendamento usado no e-mail |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | envio de e-mail (fallback) |
+| `SMTP_SEGURANCA` | `starttls` (padrão), `ssl` ou `none` |
+| `EMAIL_ASSUNTO`, `EMAIL_CORPO` | modelo do e-mail (a aba **Mensagens** tem prioridade) |
+| `EMAIL_REMETENTE_NOME`, `EMAIL_RESPOSTA` | nome do remetente e endereço de resposta |
+| `MENSAGEM_WHATSAPP`, `MENSAGEM_KOMMO` | modelos de WhatsApp e Kommo (a aba **Mensagens** tem prioridade) |
+| `LINK_AGENDA` | link de agendamento usado nas mensagens |
 | `KOMMO_URL` | `https://sua-conta.kommo.com` |
 | `KOMMO_TOKEN` | token de longa duração |
 | `KOMMO_PIPELINE` | ID do funil |
@@ -121,11 +124,37 @@ Com `AUTH_CERT=1` o app escuta só em `127.0.0.1` (o proxy é quem fica exposto)
 cadastro aceita `.cer`, `.crt`, `.pem`, `.pfx` e `.p12` (a senha do `.pfx` é usada só para extrair
 o certificado e não é armazenada).
 
-**Perfis:** o `admin` vê todas as abas; o `operador` vê **Renovações** e **Configurações**
-(importação de planilha e integração Kommo). A aba **Usuários** é exclusiva do perfil `admin`.
+**Perfis:** o `admin` vê todas as abas; o `operador` vê **Renovações**, **Mensagens** e
+**Configurações** (importação de planilha e integração Kommo). A aba **Usuários** é exclusiva do
+perfil `admin`.
 
-**Tema:** em **Configurações → Aparência** é possível escolher **Automático**, **Claro** ou
-**Escuro**; a preferência fica salva no navegador.
+**Tema e menu:** o botão de tema no canto superior alterna **Automático → Claro → Escuro**. O menu
+lateral pode ser recolhido e fixado pelos botões ao lado do título; o tema e o estado fixado ficam
+salvos no navegador.
+
+## Mensagens de renovação
+
+A aba **Mensagens** reúne três modelos com as mesmas variáveis: `{cliente}`, `{tipo}`,
+`{vencimento}`, `{quando}`, `{dias}`, `{valor}`, `{link}`, `{empresa}` e `{remetente}`. Clique em
+uma variável para inseri-la no campo em foco.
+
+- **E-mail:** assunto e corpo enviados pela régua e pelo teste.
+- **WhatsApp:** usada no botão **WhatsApp** do cliente (abre o `wa.me` com o texto pronto) e nas
+  notas da régua.
+- **Kommo CRM:** usada no botão **Enviar para Kommo** do cliente, que cria uma nota no lead.
+
+A aba também configura o **remetente** (nome, e-mail, responda-para e link de agendamento) e o
+**servidor SMTP** (servidor, porta, usuário, senha e segurança `STARTTLS`, `SSL/TLS` ou sem TLS).
+O botão **Teste** envia uma mensagem de exemplo. A senha fica salva no banco local; o campo vazio
+mantém a senha atual. A API nunca devolve a senha, apenas o indicador `smtp_senha_definida`.
+
+Nos **dados do cliente**, o painel mostra o e-mail importado e permite:
+- ativar/desativar os avisos de renovação para aquele cliente;
+- usar o e-mail importado ou cadastrar um **e-mail alternativo** de envio;
+- abrir o **WhatsApp** com a mensagem padrão ou **enviar a mensagem para a Kommo**.
+
+A régua usa o e-mail alternativo quando ele existe; se o envio estiver desativado, o cliente é
+ignorado sem alterar o status. A importação não sobrescreve o e-mail alternativo já escolhido.
 
 ## Versão Cloudflare Pages (`*.pages.dev`)
 
@@ -138,7 +167,7 @@ npm install
 npm run db:local && npm run db:seed
 npm run dev          # http://127.0.0.1:8788
 npm test             # 12 testes unitários
-npm run test:api     # 23 verificações de integração
+npm run test:api     # 28 verificações de integração
 ```
 
 Deploy resumido (detalhes em [`cloudflare/README.md`](cloudflare/README.md)):
@@ -176,8 +205,9 @@ Status: `a_vencer → email_enviado → whatsapp_enviado → agendado → emitid
 python testes.py -v
 ```
 
-33 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade), régua
-(aviso em D30, repetição a cada 7 dias, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook e login por certificado
+38 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade), régua
+(aviso em D30, repetição a cada 7 dias, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook,
+modelos de mensagem, mensagem para a Kommo e login por certificado
 (certificado válido, vencido, inativo, operador × admin, cadastro PEM e DER).
 
 ## Segurança

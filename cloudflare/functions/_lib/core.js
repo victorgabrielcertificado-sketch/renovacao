@@ -6,6 +6,27 @@ export const REGUA = [60, 30, 15, 7, 1, -3]; // limiares do WhatsApp (dias antes
 const LIMITE_ATRASO = 30; // WhatsApp não notifica quem venceu há mais de X dias
 const EMAIL_INICIO = 30; // primeiro e-mail de vencimento: 30 dias antes
 const EMAIL_INTERVALO = 7; // repete o e-mail a cada 7 dias até concluir a renovação
+const EMAIL_ASSUNTO_PADRAO = "Seu certificado {tipo} {quando}";
+const EMAIL_CORPO_PADRAO =
+  "Olá, {cliente}!\n\n" +
+  "Seu certificado digital {tipo} {quando} ({vencimento}).\n" +
+  "Para renovar sem interrupção, agende aqui: {link}\n\n" +
+  "Atenciosamente,\n{empresa}\n";
+const MENSAGEM_WHATSAPP_PADRAO =
+  "Olá, {cliente}! Seu certificado {tipo} {quando}. Podemos falar sobre a renovação?";
+const MENSAGEM_KOMMO_PADRAO =
+  "Aviso de renovação: certificado {tipo} de {cliente} {quando} ({vencimento}).";
+const MENSAGEM_CONFIG_KEYS = [
+  "email_assunto",
+  "email_corpo",
+  "email_remetente_nome",
+  "email_remetente",
+  "email_resposta",
+  "email_link",
+  "email_api_key",
+  "mensagem_whatsapp",
+  "mensagem_kommo",
+];
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_UPLOAD = 20 * 1024 * 1024;
@@ -124,16 +145,62 @@ function quandoTexto(dias) {
   return `venceu há ${d} dia${d === 1 ? "" : "s"}`;
 }
 
+function dataBR(valor) {
+  const s = String(valor || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : s;
+}
+
+function moedaBR(valor) {
+  if (valor === null || valor === undefined || valor === "") return "—";
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return "—";
+  return "R$ " + n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderModelo(texto, r, dias, K) {
+  const valores = {
+    cliente: String(r.cliente || ""),
+    tipo: String(r.tipo || ""),
+    vencimento: dataBR(r.vencimento),
+    quando: quandoTexto(dias),
+    dias: String(dias),
+    valor: moedaBR(r.valor),
+    link: String(K.email_link || ""),
+    empresa: String(K.email_remetente_nome || ""),
+    remetente: String(K.email_remetente || ""),
+  };
+  return String(texto || "").replace(
+    /\{(cliente|tipo|vencimento|quando|dias|valor|link|empresa|remetente)\}/g,
+    (_, chave) => valores[chave] ?? "",
+  );
+}
+
+function emailDestino(r) {
+  if (Number(r.enviar_email ?? 1) === 0) return null;
+  const destino = String(r.email_envio || r.email || "").trim();
+  return destino && EMAIL_RE.test(destino) ? destino : null;
+}
+
 async function loadConfig(env) {
   const K = {
     url: env.KOMMO_URL || "",
     token: env.KOMMO_TOKEN || "",
     pipeline: env.KOMMO_PIPELINE || "",
     etapas: parseEtapas(env.KOMMO_ETAPAS),
+    email_assunto: env.EMAIL_ASSUNTO || EMAIL_ASSUNTO_PADRAO,
+    email_corpo: env.EMAIL_CORPO || EMAIL_CORPO_PADRAO,
+    email_remetente_nome: env.EMAIL_REMETENTE_NOME || "Equipe de Renovação",
+    email_remetente: env.EMAIL_FROM || "renovacao@exemplo.com",
+    email_resposta: env.EMAIL_RESPOSTA || "",
+    email_link: env.LINK_AGENDA || "https://exemplo.com/agendar",
+    email_api_key: env.RESEND_API_KEY || "",
+    mensagem_whatsapp: env.MENSAGEM_WHATSAPP || MENSAGEM_WHATSAPP_PADRAO,
+    mensagem_kommo: env.MENSAGEM_KOMMO || MENSAGEM_KOMMO_PADRAO,
   };
   const rows = await all(env, "SELECT chave, valor FROM config");
   for (const { chave, valor } of rows) {
     if (["url", "token", "pipeline"].includes(chave) && valor != null) K[chave] = valor;
+    else if (MENSAGEM_CONFIG_KEYS.includes(chave) && valor != null) K[chave] = valor;
     else if (chave === "etapas" && valor) {
       const e = parseEtapas(valor);
       if (Object.keys(e).length) K.etapas = e;
@@ -238,28 +305,32 @@ async function avancar(env, K, rid, novo, origem = "sistema", detalhe = "") {
   return true;
 }
 
-async function enviarEmail(env, r, dias) {
-  const destino = String(r.email || "").trim();
-  if (!destino || !EMAIL_RE.test(destino)) {
-    await log(env, r.id, "email", "email", "ignorado", "sem e-mail válido");
+async function enviarEmail(env, K, r, dias, logEvento = true) {
+  const destino = emailDestino(r);
+  if (!destino) {
+    if (logEvento) await log(env, r.id, "email", "email", "ignorado", "sem e-mail válido ou envio desativado");
     return [false, true];
   }
-  const quando = quandoTexto(dias);
-  const assunto = `Seu certificado ${r.tipo} ${quando}`;
-  const corpo =
-    `Olá, ${r.cliente}!\n\nSeu certificado digital ${r.tipo} ${quando} (${r.vencimento}). ` +
-    `Para renovar sem interrupção, agende aqui: ${env.LINK_AGENDA || "https://exemplo.com/agendar"}\n`;
+  const assunto = (
+    renderModelo(K.email_assunto || EMAIL_ASSUNTO_PADRAO, r, dias, K).trim() ||
+    `Seu certificado ${r.tipo} ${quandoTexto(dias)}`
+  ).slice(0, 200);
+  const corpo = renderModelo(K.email_corpo || EMAIL_CORPO_PADRAO, r, dias, K);
+  const remetente = String(K.email_remetente || "renovacao@exemplo.com");
+  const nome = String(K.email_remetente_nome || "").trim();
+  const de = nome ? `${nome} <${remetente}>` : remetente;
 
-  if (env.RESEND_API_KEY) {
+  if (K.email_api_key) {
     try {
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
-        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${K.email_api_key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: env.EMAIL_FROM || "renovacao@exemplo.com",
+          from: de,
           to: [destino],
           subject: assunto,
           text: corpo,
+          ...(K.email_resposta ? { reply_to: K.email_resposta } : {}),
         }),
       });
       if (!resp.ok) {
@@ -279,16 +350,14 @@ async function enviarEmail(env, r, dias) {
 
 async function enviarWhatsapp(env, K, r, dias) {
   if (!String(r.telefone || "").replace(/\D/g, "") || String(r.telefone).replace(/\D/g, "").length < 10) return false;
+  const texto =
+    renderModelo(K.mensagem_whatsapp || MENSAGEM_WHATSAPP_PADRAO, r, dias, K).trim() ||
+    `WhatsApp de renovação: certificado ${r.tipo} ${quandoTexto(dias)} (${r.vencimento})`;
   if (!K.url || !K.token) {
-    console.log(`[whatsapp simulado] ${r.telefone}: certificado ${quandoTexto(dias)}`);
+    console.log(`[whatsapp simulado] ${r.telefone}: ${texto}`);
     return true;
   }
-  return syncKommo(
-    env,
-    K,
-    r.id,
-    `WhatsApp de renovação: certificado ${r.tipo} ${quandoTexto(dias)} (${r.vencimento})`,
-  );
+  return syncKommo(env, K, r.id, texto);
 }
 
 async function regua(env, K, hoje = todayISO(env)) {
@@ -305,12 +374,12 @@ async function regua(env, K, hoje = todayISO(env)) {
     let notificou = false;
 
     // E-mail: aviso a partir de D30 e repetição a cada 7 dias, até concluir.
-    const temEmail = Boolean(r.email && EMAIL_RE.test(String(r.email).trim()));
+    const temEmail = Boolean(emailDestino(r));
     if (temEmail && dias <= EMAIL_INICIO) {
       const ultimo = r.ultimo_email ? String(r.ultimo_email).slice(0, 10) : null;
       const desde = ultimo ? diffDays(hoje, ultimo) : null;
       if (ultimo === null || desde === null || desde >= EMAIL_INTERVALO) {
-        const [enviado, permanente] = await enviarEmail(env, r, dias);
+        const [enviado, permanente] = await enviarEmail(env, K, r, dias);
         if (enviado) {
           await log(env, r.id, "email", "email", "enviado", `aviso de vencimento (${quandoTexto(dias)})`);
           await run(env, "UPDATE renovacoes SET ultimo_email=? WHERE id=?", hoje, r.id);
@@ -815,6 +884,15 @@ async function rotaGet(env, K, url, user, admin) {
       pipeline: K.pipeline,
       etapas: K.etapas,
       token_definido: Boolean(K.token),
+      email_assunto: K.email_assunto || "",
+      email_corpo: K.email_corpo || "",
+      email_remetente_nome: K.email_remetente_nome || "",
+      email_remetente: K.email_remetente || "",
+      email_resposta: K.email_resposta || "",
+      email_link: K.email_link || "",
+      email_api_key_definida: Boolean(K.email_api_key),
+      mensagem_whatsapp: K.mensagem_whatsapp || "",
+      mensagem_kommo: K.mensagem_kommo || "",
     });
   }
   throw new HttpError(404, "não encontrado");
@@ -972,6 +1050,31 @@ async function criarRenovacao(env, body) {
 }
 
 async function salvarConfig(env, d) {
+  const camposEmail = ["email_assunto", "email_remetente_nome", "email_remetente", "email_resposta", "email_link"];
+  for (const chave of camposEmail) {
+    if (chave in d) {
+      const limite = chave === "email_assunto" ? 200 : 500;
+      const valor = String(d[chave] ?? "").trim().slice(0, limite);
+      if ((chave === "email_remetente" || chave === "email_resposta") && valor && !EMAIL_RE.test(valor)) {
+        throw new HttpError(400, `${chave} inválido`);
+      }
+      if (chave === "email_link" && valor && !/^https?:\/\//i.test(valor)) {
+        throw new HttpError(400, "o link deve começar com http:// ou https://");
+      }
+      await run(env, "INSERT OR REPLACE INTO config(chave,valor) VALUES(?,?)", chave, valor);
+    }
+  }
+  for (const chave of ["email_corpo", "mensagem_whatsapp", "mensagem_kommo"]) {
+    if (chave in d) {
+      const texto = String(d[chave] ?? "");
+      if (texto.length > 20000) throw new HttpError(400, "mensagem grande demais");
+      await run(env, "INSERT OR REPLACE INTO config(chave,valor) VALUES(?,?)", chave, texto);
+    }
+  }
+  if (d.email_api_key) {
+    await run(env, "INSERT OR REPLACE INTO config(chave,valor) VALUES('email_api_key',?)", String(d.email_api_key));
+  }
+  if (d.limpar_email_api_key) await run(env, "DELETE FROM config WHERE chave='email_api_key'");
   if ("url" in d) {
     const u = String(d.url || "").trim();
     if (u && !/^https?:\/\//i.test(u)) throw new HttpError(400, "a URL deve começar com http:// ou https://");
@@ -1099,6 +1202,61 @@ async function rotaPost(env, K, url, request, user, admin) {
     throw new HttpError(400, "JSON inválido");
   }
   if (!d || typeof d !== "object" || Array.isArray(d)) throw new HttpError(400, "JSON inválido");
+
+  if (p === "/api/renovacoes/email") {
+    const rid = intOrNull(d.id);
+    if (rid === null) throw new HttpError(400, "id inválido");
+    const row = await first(env, "SELECT * FROM renovacoes WHERE id=?", rid);
+    if (!row) throw new HttpError(404, "renovação não encontrada");
+    const ativo = d.enviar_email === false || d.enviar_email === 0 || d.enviar_email === "0" ? 0 : 1;
+    const emailEnvio = String(d.email_envio || "").trim().slice(0, 200) || null;
+    if (emailEnvio && !EMAIL_RE.test(emailEnvio)) {
+      throw new HttpError(400, "informe um e-mail válido para o envio");
+    }
+    await run(env, "UPDATE renovacoes SET enviar_email=?, email_envio=? WHERE id=?", ativo, emailEnvio, rid);
+    await log(
+      env,
+      rid,
+      "email_config",
+      "painel",
+      "salvo",
+      `enviar=${ativo ? "sim" : "não"} destino=${emailEnvio || "importado"}`,
+    );
+    return json(await first(env, "SELECT * FROM renovacoes WHERE id=?", rid));
+  }
+
+  if (p === "/api/email/testar") {
+    const para = String(d.para || "").trim().slice(0, 200);
+    if (!para || !EMAIL_RE.test(para)) throw new HttpError(400, "informe um e-mail de teste válido");
+    const exemplo = {
+      id: 0,
+      cliente: "Cliente de teste",
+      tipo: "e-CNPJ A1",
+      vencimento: todayISO(env),
+      valor: 0,
+      email: para,
+      email_envio: null,
+      enviar_email: 1,
+    };
+    const [ok] = await enviarEmail(env, K, exemplo, 30, false);
+    if (ok && !K.email_api_key) {
+      return json({ ok: true, msg: "Sem provedor configurado: modo simulação (veja o log do servidor)." });
+    }
+    return json({ ok, msg: ok ? "Teste enviado." : "Falha no envio; veja o log do servidor." });
+  }
+
+  if (p === "/api/kommo/mensagem") {
+    const rid = intOrNull(d.id);
+    if (rid === null) throw new HttpError(400, "id inválido");
+    const r = await first(env, "SELECT * FROM renovacoes WHERE id=?", rid);
+    if (!r) throw new HttpError(404, "renovação não encontrada");
+    const dias = diffDays(r.vencimento, todayISO(env)) ?? 0;
+    const texto = renderModelo(K.mensagem_kommo || MENSAGEM_KOMMO_PADRAO, r, dias, K).trim();
+    if (!texto) throw new HttpError(400, "mensagem da Kommo vazia");
+    const ok = await syncKommo(env, K, rid, texto);
+    await log(env, rid, "kommo", "kommo", ok ? "mensagem" : "falhou", texto.slice(0, 300));
+    return json({ ok, msg: ok ? "Mensagem enviada para a Kommo." : "Falha ao enviar para a Kommo." });
+  }
 
   if (p === "/api/usuarios/senha") {
     const uid = intOrNull(d.id);

@@ -330,6 +330,122 @@ async function main() {
     assert.equal(c.json.etapas.agendado, 777);
   });
 
+  await passo("configuração de e-mail salva modelo, remetente e chave", async () => {
+    const salvar = await req("/api/config", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email_assunto: "Aviso para {cliente}",
+        email_corpo: "Olá, {cliente}! Seu certificado {tipo} {quando}.",
+        email_remetente_nome: "Empresa Teste",
+        email_remetente: "renovacao@teste.com",
+        email_resposta: "contato@teste.com",
+        email_link: "https://teste.com/agendar",
+        email_api_key: "re_teste",
+        mensagem_whatsapp: "Olá, {cliente}! Falamos do certificado?",
+        mensagem_kommo: "Lead {cliente}: {tipo} {quando}",
+      }),
+    });
+    assert.equal(salvar.status, 200);
+    const c = await req("/api/config", { headers: { Authorization: BASIC } });
+    assert.equal(c.status, 200);
+    assert.equal(c.json.email_assunto, "Aviso para {cliente}");
+    assert.equal(c.json.email_remetente, "renovacao@teste.com");
+    assert.equal(c.json.email_remetente_nome, "Empresa Teste");
+    assert.equal(c.json.mensagem_whatsapp, "Olá, {cliente}! Falamos do certificado?");
+    assert.equal(c.json.mensagem_kommo, "Lead {cliente}: {tipo} {quando}");
+    assert.equal(c.json.email_api_key_definida, true);
+    assert.ok(!c.text.includes("re_teste"), "a chave não deve ser exposta");
+
+    const invalido = await req("/api/config", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ email_remetente: "invalido" }),
+    });
+    assert.equal(invalido.status, 400);
+
+    const limpar = await req("/api/config", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ limpar_email_api_key: true }),
+    });
+    assert.equal(limpar.status, 200);
+    const semChave = await req("/api/config", { headers: { Authorization: BASIC } });
+    assert.equal(semChave.json.email_api_key_definida, false);
+  });
+
+  await passo("e-mail de envio por cliente", async () => {
+    const lista = await req("/api/renovacoes?mes=2026-12", { headers: { Authorization: BASIC } });
+    const alvo = lista.json.find((x) => x.cliente === "Gama Ltda");
+    assert.ok(alvo, "Gama não encontrada");
+    const salvar = await req("/api/renovacoes/email", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: alvo.id, enviar_email: false, email_envio: "outro@teste.com" }),
+    });
+    assert.equal(salvar.status, 200);
+    assert.equal(salvar.json.enviar_email, 0);
+    assert.equal(salvar.json.email_envio, "outro@teste.com");
+
+    const invalido = await req("/api/renovacoes/email", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: alvo.id, enviar_email: true, email_envio: "invalido" }),
+    });
+    assert.equal(invalido.status, 400);
+
+    const restaurar = await req("/api/renovacoes/email", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: alvo.id, enviar_email: true, email_envio: "" }),
+    });
+    assert.equal(restaurar.status, 200);
+    assert.equal(restaurar.json.enviar_email, 1);
+    assert.equal(restaurar.json.email_envio, null);
+  });
+
+  await passo("teste de e-mail em modo simulação", async () => {
+    const r = await req("/api/email/testar", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ para: "teste@empresa.com" }),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    assert.match(r.json.msg, /simulação/);
+    const invalido = await req("/api/email/testar", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ para: "invalido" }),
+    });
+    assert.equal(invalido.status, 400);
+  });
+
+  await passo("mensagem para a Kommo em modo simulação", async () => {
+    const lista = await req("/api/renovacoes?mes=2026-12", { headers: { Authorization: BASIC } });
+    const alvo = lista.json.find((x) => x.cliente === "Gama Ltda");
+    assert.ok(alvo, "Gama não encontrada");
+    const r = await req("/api/kommo/mensagem", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: alvo.id }),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true);
+    const invalido = await req("/api/kommo/mensagem", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "x" }),
+    });
+    assert.equal(invalido.status, 400);
+    const naoEncontrado = await req("/api/kommo/mensagem", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: 999999 }),
+    });
+    assert.equal(naoEncontrado.status, 404);
+  });
+
   await passo("cadastro de certificado e login por certificado", async () => {
     const { pem, info } = await gerarCert("Cert API");
     const q = `?nome=Cert API&email=cert@teste.com&perfil=admin&arquivo=cert.pem`;
