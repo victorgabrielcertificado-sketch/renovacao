@@ -1,14 +1,14 @@
 # Renovação de certificados digitais
 
 Protótipo em Python para acompanhar o vencimento de certificados digitais, disparar avisos
-automáticos (e-mail/WhatsApp), sincronizar leads com a Kommo CRM e medir a taxa de renovação.
+automáticos (e-mail/WhatsApp), registrar mensagens na Kommo CRM e medir a taxa de renovação.
 
 ## O que faz
 
 - **Importa planilhas** `.csv`, `.xls`, `.xlsx` (detecta `;`, BOM, acentos e serial de data do Excel).
 - **Régua de avisos** em D−60, D−30, D−15, D−7, D−1 e D+3 (vencido), sem repetir envios.
-- **E-mail** via SMTP (porta 465 com SSL ou 587 com STARTTLS) e **WhatsApp** como ponto de
-  extensão via nota no lead da Kommo.
+- **Mensagens** com modelos de **e-mail** (SMTP, porta 465/SSL ou 587/STARTTLS), **WhatsApp**
+  (`wa.me` com o texto pronto) e **Kommo CRM** (nota no lead).
 - **Sincroniza com a Kommo**: cria/atualiza lead, move etapa e registra nota.
 - **Webhook** para receber mudanças de etapa da Kommo.
 - **Login por certificado digital** (e-CPF/e-CNPJ) via proxy TLS, com perfis `admin`/`operador`.
