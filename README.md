@@ -129,9 +129,10 @@ o certificado e não é armazenada).
 **Configurações** (importação de planilha e integração Kommo). A aba **Usuários** é exclusiva do
 perfil `admin`.
 
-**Tema e menu:** o botão de tema no canto superior alterna **Automático → Claro → Escuro**. O menu
-lateral pode ser recolhido e fixado pelos botões ao lado do título; o tema e o estado fixado ficam
-salvos no navegador.
+**Tema e menu:** o botão de tema no canto superior alterna **Automático → Claro → Escuro**. Os
+botões de recolher e fixar ficam dentro do menu, ao lado do nome do sistema. Sem fixar, o menu
+começa recolhido e volta a recolher ao escolher uma aba; fixado, permanece aberto. O tema e o
+estado fixado ficam salvos no navegador.
 
 ## Mensagens de renovação
 

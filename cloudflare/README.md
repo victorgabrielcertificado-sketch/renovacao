@@ -170,9 +170,10 @@ o botão **Sair do sistema** remove o cookie.
 - **Perfis:** `admin` vê todas as abas; `operador` vê **Renovações**, **Mensagens** e
   **Configurações** (importação de planilha e integração Kommo), mas a aba **Usuários** é exclusiva
   de `admin`.
-- **Tema e menu:** o botão no canto superior alterna **Automático → Claro → Escuro**; o menu lateral
-  pode ser recolhido e fixado pelos botões ao lado do título. As duas preferências ficam salvas no
-  navegador (`localStorage`).
+- **Tema e menu:** o botão no canto superior alterna **Automático → Claro → Escuro**. Os botões de
+  recolher e fixar ficam dentro do menu, ao lado do nome do sistema. Sem fixar, o menu começa
+  recolhido e volta a recolher ao escolher uma aba; fixado, permanece aberto. As duas preferências
+  ficam salvas no navegador (`localStorage`).
 - As senhas são gravadas como hash **PBKDF2-SHA256 com salt**; nunca em texto puro.
 - O admin pode redefinir a senha de qualquer usuário pelo botão **Senha** na lista.
 - O cookie é assinado com `SESSION_SECRET` (ou, se ausente, com `PAINEL_SENHA`).

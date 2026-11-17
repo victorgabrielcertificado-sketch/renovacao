@@ -791,10 +791,13 @@ body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system
 .side{width:236px;flex-shrink:0;background:var(--sf);border-right:1px solid var(--ln);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;transition:width .18s ease}
 .side.collapsed{width:72px}
 .side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:none}
-.side.collapsed .brand{justify-content:center;padding:18px 8px}
+.side.collapsed .brand{flex-direction:column;gap:6px;padding:10px 6px}
+.side.collapsed .brand-acoes{margin-left:0}
 .side.collapsed .mi{justify-content:center;padding:10px}
 .side.collapsed .side-foot{text-align:center;padding:12px 6px}
 .brand{display:flex;align-items:center;gap:10px;padding:18px 16px;border-bottom:1px solid var(--ln)}
+.brand-acoes{margin-left:auto;display:flex;gap:4px;flex-shrink:0}
+.brand-acoes .bell{width:28px;height:28px;font-size:14px;border-radius:8px}
 .logo{width:34px;height:34px;flex-shrink:0}
 .brand-txt{font-size:11px;font-weight:800;letter-spacing:.03em;line-height:1.3;text-transform:uppercase}
 .menu{display:flex;flex-direction:column;gap:2px;padding:12px 8px;flex:1;overflow-y:auto}
@@ -878,13 +881,17 @@ select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 #msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}#msg.on{opacity:1}
 @media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.dash{grid-template-columns:1fr}.detail{position:static}}
-@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}#btn-menu,#btn-fixar{display:none}.side.collapsed{width:100%}.side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:inline}.side.collapsed .brand{justify-content:flex-start;padding:12px}.side.collapsed .mi{justify-content:flex-start;padding:9px 12px}.u-info{display:none}.usuario{border-left:0;padding-left:0;margin-left:0;gap:8px}}
+@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}#btn-menu,#btn-fixar,.brand-acoes{display:none}.side.collapsed{width:100%}.side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:inline}.side.collapsed .brand{flex-direction:row;justify-content:flex-start;padding:12px}.side.collapsed .mi{justify-content:flex-start;padding:9px 12px}.u-info{display:none}.usuario{border-left:0;padding-left:0;margin-left:0;gap:8px}}
 </style></head><body>
 <div class="app">
 <aside class="side">
  <div class="brand">
   <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5l8-3z" fill="#0f6f73"/><path d="M8.5 12l2.5 2.5 4.5-4.5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
   <div class="brand-txt">Sistema de<br>Renovação de<br>Certificados</div>
+  <div class="brand-acoes">
+   <button id="btn-menu" class="bell" onclick="alternarMenu()" title="Recolher menu" aria-label="Recolher menu">«</button>
+   <button id="btn-fixar" class="bell" onclick="fixarMenu()" title="Fixar menu" aria-label="Fixar menu" aria-pressed="false">📌</button>
+  </div>
  </div>
  <nav class="menu">
   <button id="m1" class="mi" onclick="aba(1)" aria-current="true" title="Painel Geral"><span class="ic">▦</span><span class="lbl">Painel Geral</span></button>
@@ -897,7 +904,7 @@ select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1
  </nav>
  </aside>
 <div class="wrap">
-<header class="top"><button id="btn-menu" class="bell" onclick="alternarMenu()" title="Recolher menu" aria-label="Recolher menu">«</button><button id="btn-fixar" class="bell" onclick="fixarMenu()" title="Fixar menu" aria-label="Fixar menu" aria-pressed="false">📌</button><h1>Renovação de certificados</h1><div class="top-actions"><button id="btn-tema" class="bell" onclick="ciclarTema()" title="Alterar tema" aria-label="Alterar tema">🌓</button><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button><div class="usuario" id="usuario" title="Sessão do usuário"><span class="avatar" id="u-avatar">–</span><span class="u-info"><b id="u-nome">…</b><span class="u-perfil" id="u-perfil">…</span></span><button class="sair-icone" id="btn-sair" onclick="sair()" title="Sair do sistema" aria-label="Sair do sistema"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M10 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-8v-2h8V5h-8V3z" fill="currentColor"/><path d="M12 12H3m0 0 3-3m-3 3 3 3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div></header>
+<header class="top"><h1>Renovação de certificados</h1><div class="top-actions"><button id="btn-tema" class="bell" onclick="ciclarTema()" title="Alterar tema" aria-label="Alterar tema">🌓</button><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button><div class="usuario" id="usuario" title="Sessão do usuário"><span class="avatar" id="u-avatar">–</span><span class="u-info"><b id="u-nome">…</b><span class="u-perfil" id="u-perfil">…</span></span><button class="sair-icone" id="btn-sair" onclick="sair()" title="Sair do sistema" aria-label="Sair do sistema"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M10 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-8v-2h8V5h-8V3z" fill="currentColor"/><path d="M12 12H3m0 0 3-3m-3 3 3 3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div></header>
 <main>
 <section id="s1">
  <h2>Processo de Renovação de Certificados</h2>
@@ -1023,10 +1030,11 @@ function aplicarTema(v){const r=document.documentElement;if(v==="light"||v==="da
 function ciclarTema(){const atual=temaSalvo();aplicarTema(TEMAS[(TEMAS.indexOf(atual)+1)%TEMAS.length])}
 function menuEstado(){try{return localStorage.getItem("menu")||""}catch(_){return ""}}
 function menuFixado(){try{return localStorage.getItem("menu_fixado")==="1"}catch(_){return false}}
+function menuMobile(){try{return window.matchMedia("(max-width:700px)").matches}catch(_){return false}}
 function atualizarBotoesMenu(){const s=document.querySelector(".side");const b=el("btn-menu");if(b&&s){const c=s.classList.contains("collapsed");b.textContent=c?"»":"«";b.title=c?"Expandir menu":"Recolher menu";b.setAttribute("aria-label",b.title)}const p=el("btn-fixar");if(p){const f=menuFixado();p.textContent=f?"📌":"📍";p.style.opacity=f?"1":".6";p.setAttribute("aria-pressed",String(f));p.title=f?"Menu fixado (clique para liberar)":"Fixar menu";p.setAttribute("aria-label",p.title)}}
-function aplicarMenu(){const s=document.querySelector(".side");if(s)s.classList.toggle("collapsed",menuEstado()==="recolhido");atualizarBotoesMenu()}
+function aplicarMenu(){const s=document.querySelector(".side");if(!s)return;const recolhido=menuMobile()?false:(menuFixado()?menuEstado()==="recolhido":true);s.classList.toggle("collapsed",recolhido);atualizarBotoesMenu()}
 function alternarMenu(){const s=document.querySelector(".side");if(!s)return;s.classList.toggle("collapsed");if(menuFixado()){try{localStorage.setItem("menu",s.classList.contains("collapsed")?"recolhido":"aberto")}catch(_){}}atualizarBotoesMenu()}
-function fixarMenu(){const fixado=!menuFixado();try{localStorage.setItem("menu_fixado",fixado?"1":"0");if(fixado){const s=document.querySelector(".side");localStorage.setItem("menu",s&&s.classList.contains("collapsed")?"recolhido":"aberto")}else localStorage.removeItem("menu")}catch(_){}atualizarBotoesMenu();toast(fixado?"Menu fixado.":"Menu liberado.")}
+function fixarMenu(){const fixado=!menuFixado();const s=document.querySelector(".side");try{localStorage.setItem("menu_fixado",fixado?"1":"0");if(fixado){if(s)s.classList.remove("collapsed");localStorage.setItem("menu","aberto")}else{localStorage.removeItem("menu");if(s)s.classList.add("collapsed")}}catch(_){}atualizarBotoesMenu();toast(fixado?"Menu fixado.":"Menu liberado.")}
 const j=async(u,o)=>{const r=await fetch(u,o);if(!r.ok){let m=r.status+" "+r.statusText;try{m=(await r.json()).erro||m}catch(_){}throw new Error(m)}return r.json()};
 const post=(u,b)=>j(u,{method:"POST",headers:{"X-Requested-With":"fetch",...(b instanceof Blob?{}:{"Content-Type":"application/json"})},body:b instanceof Blob?b:JSON.stringify(b??{})});
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -1049,7 +1057,7 @@ async function enviarKommo(id){try{const r=await post("/api/kommo/mensagem",{id}
 let ultimoCampo=null;
 document.addEventListener("focusin",e=>{if(e.target&&e.target.tagName==="TEXTAREA")ultimoCampo=e.target});
 function inserirVar(v){const t=ultimoCampo||el("em-corpo");if(!t)return;const s=t.selectionStart??t.value.length,e=t.selectionEnd??s;t.value=t.value.slice(0,s)+v+t.value.slice(e);t.focus();t.selectionStart=t.selectionEnd=s+v.length}
-function aba(n){if(n===6&&EU.perfil!=="admin")return;for(let i=1;i<=7;i++){const s=el("s"+i),m=el("m"+i);if(s)s.hidden=i!=n;if(m)m.setAttribute("aria-current",String(i==n))}if(n===5)cfgLoad();if(n===6)usuarios();if(n===7)emailCfgLoad();if(n===1)renderDashboard();if(n===2)renderAtivos();if(n===3)renderFila();if(n===4)renderHistorico()}
+function aba(n){if(n===6&&EU.perfil!=="admin")return;for(let i=1;i<=7;i++){const s=el("s"+i),m=el("m"+i);if(s)s.hidden=i!=n;if(m)m.setAttribute("aria-current",String(i==n))}if(n===5)cfgLoad();if(n===6)usuarios();if(n===7)emailCfgLoad();if(n===1)renderDashboard();if(n===2)renderAtivos();if(n===3)renderFila();if(n===4)renderHistorico();if(!menuFixado()&&!menuMobile()){const s=document.querySelector(".side");if(s)s.classList.add("collapsed");atualizarBotoesMenu()}}
 function progress(s){const p=PROG[s]||{l:NM[s]||s,p:0,c:"#8f9aa7"};return `<span class="progress"><span class="plabel">${p.l}</span><span class="track"><span class="fill" style="width:${p.p}%;background:${p.c}"></span></span></span>`}
 function acoes(x){const b=[];if(x.status==="a_vencer")b.push(`<button class="b p sm" onclick="event.stopPropagation();mudar(${x.id},'email_enviado')">Solicitar Renovação</button>`);else if(x.status==="email_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'whatsapp_enviado')">Enviar Documentos</button>`);else if(x.status==="whatsapp_enviado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'agendado')">Notificar Usuário</button>`);else if(x.status==="agendado")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'emitido')">Emitir</button>`);else if(x.status==="emitido")b.push(`<button class="b sm" onclick="event.stopPropagation();mudar(${x.id},'pago')">Marcar como pago</button>`);if(x.telefone)b.push(`<button class="lk" onclick="event.stopPropagation();abrirWhatsApp(${x.id})" title="Abrir WhatsApp">💬</button>`);b.push(`<button class="lk" onclick="event.stopPropagation();abrir(${x.id})">Histórico</button>`);return b.join(" ")}
 function tabela(id,lista,opts={}){const cols=opts.cols||["Cliente","Tipo","Vencimento","Valor","Progresso","Ações"];el(id).innerHTML="<tr>"+cols.map(c=>`<th>${c}</th>`).join("")+"</tr>"+(lista.map(x=>`<tr class="${x.id==aberto?"sel":""}" onclick="abrir(${x.id})"><td>${esc(x.cliente)}</td><td>${esc(x.tipo)}</td><td>${br(x.vencimento)}</td><td>${moeda(x.valor)}</td>${opts.status?`<td>${NM[x.status]||x.status}</td>`:`<td>${progress(x.status)}</td>`}<td>${opts.acoes===false?"":acoes(x)}</td></tr>`).join("")||`<tr><td colspan="${cols.length}">Nenhum registro.</td></tr>`)}

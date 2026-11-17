@@ -162,9 +162,10 @@ Recursos adicionados depois da revisão inicial:
   da Resend no Cloudflare. A senha/chave nunca é devolvida pela API.
 - **Por cliente:** ativar/desativar avisos, escolher o e-mail importado ou um alternativo, abrir o
   WhatsApp e enviar a mensagem para a Kommo. A importação preserva a escolha já feita.
-- **Menu lateral recolhível** com botão de **fixar** (persistido em `localStorage`) e **botão de
-  tema no canto superior** (Automático → Claro → Escuro). O layout mobile continua em barra
-  horizontal.
+- **Menu lateral recolhível**, com os botões de recolher e fixar dentro do menu, ao lado do nome do
+  sistema. Sem fixar, o menu começa recolhido e volta a recolher ao escolher uma aba; fixado,
+  permanece aberto. O **botão de tema no canto superior** alterna Automático → Claro → Escuro. O
+  layout mobile continua em barra horizontal.
 - **Usuário no topo:** avatar com a inicial, nome, perfil e botão vermelho **Sair do sistema**.
 - Schema/migração: `renovacoes.email_envio` e `renovacoes.enviar_email`; chaves de config
   `email_assunto`, `email_corpo`, `mensagem_whatsapp`, `mensagem_kommo`, remetente e SMTP/Resend.
