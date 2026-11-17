@@ -16,6 +16,10 @@ export const ALIAS = {
     "inicio",
     "data de inicio",
     "inicio da validade",
+    "data venda",
+    "data da venda",
+    "data de venda",
+    "venda",
   ],
   duracao: [
     "duracao",
@@ -214,6 +218,8 @@ export function lerLinhas(bytes, nome) {
   if (!bruto.length) throw new Error("planilha vazia");
 
   const cols = mapearColunas(bruto[0]);
+  const vendaComoEmissao =
+    !!cols.emissao && ["data venda", "data da venda", "data de venda", "venda"].includes(norm(cols.emissao));
   const faltando = [];
   if (!cols.cliente) faltando.push("cliente");
   if (!cols.vencimento && !cols.emissao) faltando.push("vencimento ou emissao");
@@ -239,11 +245,20 @@ export function lerLinhas(bytes, nome) {
     let vencimento = cols.vencimento ? toISODate(row[cols.vencimento]) : null;
     const emissao = cols.emissao ? toISODate(row[cols.emissao]) : null;
     let duracao = cols.duracao ? duracaoMeses(row[cols.duracao], tipo) : null;
+    if (duracao == null) duracao = duracaoMeses(tipo, tipo);
+    if (duracao == null && regra && DURACOES[regra].length === 1) duracao = DURACOES[regra][0];
 
     // coluna "Validade" pode vir como duração ("1 ano", "3 meses")
     if (vencimento == null && cols.vencimento) {
       const alt = duracaoMeses(row[cols.vencimento], tipo);
       if (alt != null) duracao = duracao ?? alt;
+    }
+
+    // Em planilhas de vendas, "Data Vencimento" é a data de pagamento.
+    // O vencimento do certificado é a data de venda + duração do produto.
+    if (emissao && duracao != null && vendaComoEmissao) {
+      const calculado = addMeses(emissao, duracao);
+      if (calculado) vencimento = calculado;
     }
 
     if (vencimento == null) {

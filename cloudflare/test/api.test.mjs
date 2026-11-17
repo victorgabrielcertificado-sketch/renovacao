@@ -574,6 +574,49 @@ async function main() {
     assert.equal(novo.status, 200);
   });
 
+  await passo("planilha de vendas calcula vencimento pela data de venda", async () => {
+    const csv =
+      "Cliente;Produto;Data Venda;Data Vencimento\n" +
+      "Venda A1;e-CNPJ A1 12 meses;10/01/2026;10/01/2026\n" +
+      "Venda A3;e-CPF A3 24 meses;10/01/2026;10/01/2026\n";
+    const r = await req("/api/importar?nome=vendas.csv", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H },
+      body: csv,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.novas, 2);
+    const lista = await req("/api/renovacoes", { headers: { Authorization: BASIC } });
+    const a1 = lista.json.find((x) => x.cliente === "Venda A1");
+    const a3 = lista.json.find((x) => x.cliente === "Venda A3");
+    assert.equal(a1.vencimento, "2027-01-10");
+    assert.equal(a3.vencimento, "2028-01-10");
+  });
+
+  await passo("excluir todos os dados exige admin", async () => {
+    const semCsrf = await req("/api/dados/excluir", {
+      method: "POST",
+      headers: { Authorization: BASIC, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(semCsrf.status, 403);
+    const op = await req("/api/dados/excluir", {
+      method: "POST",
+      headers: { ...ACCESS_OP, ...H, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(op.status, 403);
+    const r = await req("/api/dados/excluir", {
+      method: "POST",
+      headers: { Authorization: BASIC, ...H, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(r.status, 200);
+    assert.ok(r.json.renovacoes >= 1);
+    const lista = await req("/api/renovacoes", { headers: { Authorization: BASIC } });
+    assert.equal(lista.json.length, 0);
+  });
+
   await passo("rota inexistente retorna 404", async () => {
     assert.equal((await req("/api/naoexiste", { headers: { Authorization: BASIC } })).status, 404);
   });

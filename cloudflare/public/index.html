@@ -84,6 +84,8 @@ button.b:hover{background:var(--bg)}
 button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button.p{color:#0b1a1c}}
 button.sm{padding:4px 9px;font-size:12px;border-radius:6px}
+button.b.danger{color:var(--red);border-color:var(--red)}
+button.b.danger:hover{background:var(--red);color:#fff}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}
 .lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
@@ -203,6 +205,8 @@ select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1
 <p style="font-size:13px;color:var(--mu)">A escolha fica salva neste navegador.</p>
 <h3>Dados</h3>
 <input type="file" id="arq" aria-label="Planilha" accept=".xlsx,.xls,.csv"> <button class="b" onclick="imp()">Importar planilha</button>
+<p style="font-size:13px;color:var(--mu)">Colunas aceitas: <b>Cliente</b>, <b>E-mail</b>, <b>Telefone</b>, <b>Produto/Tipo</b>, <b>Data Venda</b> ou <b>Emissão</b>, <b>Data Vencimento</b>, <b>Valor</b>. Em planilhas de vendas, o vencimento é calculado pela data de venda + duração do produto.</p>
+<button class="b danger" onclick="excluirDados()">Excluir todos os dados</button>
 <h3>Integração com a Kommo</h3>
 <label>URL da conta<input id="cu" placeholder="https://suaconta.kommo.com" inputmode="url"></label><label>Token de longa duração<input id="ct" type="password" autocomplete="off"></label><label>ID do funil<input id="cp" inputmode="numeric"></label>
 <p style="font-size:13px;color:var(--mu)">ID da etapa no Kommo para cada status:</p><div class="et" id="ce"></div>
@@ -315,7 +319,8 @@ async function salvar(){
 }
 async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
 async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
-async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);const av=r.avisos?` ${r.avisos} aviso(s)`+(r.detalhes&&r.detalhes.length?": "+r.detalhes[0]:""):"";toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.${av}`);await carregarTudo()}catch(e){toast("Falha ao importar: "+e.message)}}
+async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);const av=r.avisos?` ${r.avisos} aviso(s)`+(r.detalhes&&r.detalhes.length?": "+r.detalhes[0]:""):"";const base=(r.novas+r.atualizadas===0&&r.ignoradas>0)?`Nenhuma linha importada: ${r.ignoradas} ignorada(s). Verifique as colunas Cliente e Data Venda/Emissão/Vencimento.`:`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`;toast(r.erro||base+av);await carregarTudo()}catch(e){toast("Falha ao importar: "+e.message)}}
+async function excluirDados(){if(EU.perfil!=="admin")return toast("Apenas administradores podem excluir os dados.");const t=prompt("Isso apaga TODAS as renovações e o histórico. Digite EXCLUIR para confirmar:");if(t!=="EXCLUIR")return;if(!confirm("Tem certeza? Esta ação não pode ser desfeita."))return;try{const r=await post("/api/dados/excluir",{});toast(`Dados excluídos: ${r.renovacoes} renovação(ões) e ${r.eventos} evento(s).`);await carregarTudo()}catch(e){toast("Falha ao excluir: "+e.message)}}
 async function carregarEu(){try{EU=await j("/api/eu");CSRF=EU.csrf||"";const nome=EU.nome||"Usuário",perfil=EU.perfil||"",fonte=EU.fonte||"";el("u-nome").textContent=nome;el("u-perfil").textContent=perfil;el("u-avatar").textContent=(nome[0]||"U").toUpperCase();const d=el("usuario");if(d)d.title=[nome,perfil?`Perfil: ${perfil}`:"",fonte?`Sessão: ${fonte}`:"",EU.validade?`Certificado válido até ${br(EU.validade)}`:""].filter(Boolean).join("\n");const adm=perfil==="admin";const m6=el("m6"),s6=el("s6");if(m6)m6.hidden=!adm;if(!adm){if(m6)m6.remove();if(s6)s6.remove()}el("btn-sair")&&(el("btn-sair").hidden=fonte!=="sessao"&&fonte!=="local")}catch(e){}}
 async function sair(){try{await fetch("/api/logout",{method:"POST",headers:{"X-Requested-With":"fetch","X-CSRF-Token":CSRF}})}catch(e){}location.href="/login"}
 async function usuarios(){if(EU.perfil!=="admin")return;try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Senha</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${u.senha_definida?"definida":"—"}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="trocarSenha(${u.id})">Senha</button> <button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=7>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}

@@ -179,6 +179,24 @@ class Importacao(unittest.TestCase):
         self.assertEqual(r["avisos"], 1)
         self.assertIn("não confere", r["detalhes"][0])
 
+    def test_planilha_de_vendas_calcula_vencimento_pela_data_venda(self):
+        p = self._arquivo("Cliente;Produto;Data Venda;Data Vencimento;E-mail\n"
+                          "ACME;e-CNPJ A1 12 meses;10/01/2026;10/01/2026;a@b.com\n"
+                          "BETA;e-CPF A3 24 meses;10/01/2026;10/01/2026;b@b.com\n")
+        r = R.importar(p)
+        self.assertEqual(r["novas"], 2)
+        self.assertEqual(r["avisos"], 0)
+        rows = R.db().execute("SELECT cliente, vencimento FROM renovacoes ORDER BY cliente").fetchall()
+        self.assertEqual([(x["cliente"], x["vencimento"]) for x in rows],
+                         [("ACME", "2027-01-10"), ("BETA", "2028-01-10")])
+
+    def test_planilha_de_vendas_com_vencimento_vazio(self):
+        p = self._arquivo("Cliente;Produto;Data Venda;Data Vencimento\n"
+                          "ACME;e-PJ A1 - 1 ano em arquivo;10/01/2026;\n")
+        r = R.importar(p)
+        self.assertEqual(r["novas"], 1)
+        self.assertEqual(R.db().execute("SELECT vencimento FROM renovacoes").fetchone()[0], "2027-01-10")
+
     def test_reimportar_atualiza_e_preserva_status(self):
         p1 = self._arquivo("Cliente,Vencimento,E-mail\nACME,31/12/2026,velho@b.com\n")
         R.importar(p1)
@@ -344,6 +362,19 @@ class Http(unittest.TestCase):
                                    {"Content-Type": "text/csv", "X-Requested-With": "fetch"})
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(resp)["novas"], 1)
+
+    def test_excluir_dados_exige_csrf_e_apaga(self):
+        lead("A", date(2027, 1, 1))
+        lead("B", date(2027, 2, 1))
+        status, _, _ = self.req("/api/dados/excluir", "POST", b"{}",
+                                {"Content-Type": "application/json"})
+        self.assertEqual(status, 403)
+        status, _, resp = self.post_json("/api/dados/excluir", {})
+        self.assertEqual(status, 200)
+        dados = json.loads(resp)
+        self.assertEqual(dados["renovacoes"], 2)
+        self.assertEqual(R.db().execute("SELECT COUNT(*) FROM renovacoes").fetchone()[0], 0)
+        self.assertEqual(R.db().execute("SELECT COUNT(*) FROM eventos").fetchone()[0], 0)
 
     def test_criar_renovacao(self):
         status, _, resp = self.post_json("/api/renovacoes",

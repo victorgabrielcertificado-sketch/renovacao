@@ -164,7 +164,8 @@ ALIAS = {"cliente": ["cliente", "nome", "nome do cliente", "razao social", "empr
          "vencimento": ["vencimento", "data de vencimento", "data vencimento", "expira em", "validade"],
          "valor": ["valor", "preco", "valor da renovacao"],
          "emissao": ["emissao", "data de emissao", "data emissao", "emitido em",
-                     "inicio", "data de inicio", "inicio da validade"],
+                     "inicio", "data de inicio", "inicio da validade",
+                     "data venda", "data da venda", "data de venda", "venda"],
          "duracao": ["duracao", "periodo", "tempo", "duracao em meses", "duracao em anos",
                      "validade em meses", "validade em anos", "validade"]}
 
@@ -302,6 +303,8 @@ def importar(path):
     df = _ler_planilha(path)
     df = df.loc[:, ~df.columns.duplicated()]
     col = {k: _coluna(df, k) for k in ALIAS}
+    emissao_e_venda = bool(col["emissao"]) and _norm(col["emissao"]) in {
+        "data venda", "data da venda", "data de venda", "venda"}
     faltando = []
     if not col["cliente"]:
         faltando.append("cliente")
@@ -329,6 +332,11 @@ def importar(path):
     else:
         emissao = pd.Series(pd.NaT, index=df.index)
 
+    # Sem coluna de duração, tenta extrair a duração do nome do produto
+    # (ex.: "e-CNPJ A1 12 meses", "e-PJ A1 - 1 ano em arquivo").
+    duracao_serie = (df[col["duracao"]] if col["duracao"]
+                     else df[col["tipo"]] if col["tipo"] else None)
+
     dados = pd.DataFrame({
         "cliente": df[col["cliente"]],
         "email": df[col["email"]] if col["email"] else None,
@@ -337,7 +345,7 @@ def importar(path):
         "vencimento": venc,
         "vencimento_bruto": df[col["vencimento"]] if col["vencimento"] else None,
         "emissao": emissao,
-        "duracao": df[col["duracao"]] if col["duracao"] else None,
+        "duracao": duracao_serie,
         "valor": pd.to_numeric(df[col["valor"]], errors="coerce") if col["valor"] else None,
     })
 
@@ -361,13 +369,26 @@ def importar(path):
             vencimento = None if pd.isna(dia) else dia.date()
             em = r["emissao"]
             emissao_dia = None if pd.isna(em) else em.date()
-            duracao = _duracao_meses(r["duracao"], tipo)
+            duracao = None
+            if r["duracao"] is not None and not pd.isna(r["duracao"]):
+                duracao = _duracao_meses(r["duracao"], tipo)
+            if duracao is None:
+                duracao = _duracao_meses(tipo, tipo)
+            if duracao is None and regra and len(DURACOES[regra]) == 1:
+                duracao = DURACOES[regra][0]
 
             # coluna "Validade" pode vir como duração ("1 ano", "3 meses")
             if vencimento is None and r["vencimento_bruto"] is not None:
                 alt = _duracao_meses(r["vencimento_bruto"], tipo)
                 if alt is not None:
                     duracao = duracao if duracao is not None else alt
+
+            # Em planilhas de vendas, "Data Vencimento" é a data de pagamento.
+            # O vencimento do certificado é a data de venda + duração do produto.
+            if emissao_dia and duracao is not None and emissao_e_venda:
+                calculado = _add_meses(emissao_dia, duracao)
+                if calculado:
+                    vencimento = calculado
 
             if vencimento is None:
                 if emissao_dia and duracao is not None:
@@ -864,6 +885,8 @@ button.b:hover{background:var(--bg)}
 button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button.p{color:#0b1a1c}}
 button.sm{padding:4px 9px;font-size:12px;border-radius:6px}
+button.b.danger{color:var(--red);border-color:var(--red)}
+button.b.danger:hover{background:var(--red);color:#fff}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1px solid var(--ln);border-radius:6px;padding:4px 6px}
 .lk{background:none;border:0;color:var(--ac);font:inherit;font-weight:600;cursor:pointer;padding:0}
@@ -987,6 +1010,8 @@ select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1
 <p style="font-size:13px;color:var(--mu)">A escolha fica salva neste navegador.</p>
 <h3>Dados</h3>
 <input type="file" id="arq" aria-label="Planilha" accept=".xlsx,.xls,.csv"> <button class="b" onclick="imp()">Importar planilha</button>
+<p style="font-size:13px;color:var(--mu)">Colunas aceitas: <b>Cliente</b>, <b>E-mail</b>, <b>Telefone</b>, <b>Produto/Tipo</b>, <b>Data Venda</b> ou <b>Emissão</b>, <b>Data Vencimento</b>, <b>Valor</b>. Em planilhas de vendas, o vencimento é calculado pela data de venda + duração do produto.</p>
+<button class="b danger" onclick="excluirDados()">Excluir todos os dados</button>
 <h3>Integração com a Kommo</h3>
 <label>URL da conta<input id="cu" placeholder="https://suaconta.kommo.com" inputmode="url"></label><label>Token de longa duração<input id="ct" type="password" autocomplete="off"></label><label>ID do funil<input id="cp" inputmode="numeric"></label>
 <p style="font-size:13px;color:var(--mu)">ID da etapa no Kommo para cada status:</p><div class="et" id="ce"></div>
@@ -1096,7 +1121,8 @@ async function salvar(){
 }
 async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
 async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
-async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await carregarTudo()}catch(e){toast("Falha ao importar: "+e.message)}}
+async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);const av=r.avisos?` ${r.avisos} aviso(s)`+(r.detalhes&&r.detalhes.length?": "+r.detalhes[0]:""):"";const base=(r.novas+r.atualizadas===0&&r.ignoradas>0)?`Nenhuma linha importada: ${r.ignoradas} ignorada(s). Verifique as colunas Cliente e Data Venda/Emissão/Vencimento.`:`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`;toast(r.erro||base+av);await carregarTudo()}catch(e){toast("Falha ao importar: "+e.message)}}
+async function excluirDados(){if(EU.perfil!=="admin")return toast("Apenas administradores podem excluir os dados.");const t=prompt("Isso apaga TODAS as renovações e o histórico. Digite EXCLUIR para confirmar:");if(t!=="EXCLUIR")return;if(!confirm("Tem certeza? Esta ação não pode ser desfeita."))return;try{const r=await post("/api/dados/excluir",{});toast(`Dados excluídos: ${r.renovacoes} renovação(ões) e ${r.eventos} evento(s).`);await carregarTudo()}catch(e){toast("Falha ao excluir: "+e.message)}}
 async function carregarEu(){try{EU=await j("/api/eu");const nome=EU.nome||"Usuário",perfil=EU.perfil||"";el("u-nome").textContent=nome;el("u-perfil").textContent=perfil;el("u-avatar").textContent=(nome[0]||"U").toUpperCase();const d=el("usuario");if(d)d.title=nome+(perfil?` · Perfil: ${perfil}`:"");const adm=perfil==="admin";const m6=el("m6"),s6=el("s6");if(m6)m6.hidden=!adm;if(!adm){if(m6)m6.remove();if(s6)s6.remove()}}catch(e){}}
 function sair(){toast("Sessão local encerrada.");location.reload()}
 async function usuarios(){if(EU.perfil!=="admin")return;try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
@@ -1279,6 +1305,10 @@ class H(BaseHTTPRequestHandler):
             return self._send({"erro": "requisição inválida"}, code=403)
         if p.startswith("/api/usuarios") and not self._admin():
             return self._send({"erro": "apenas administradores"}, code=403)
+        if p == "/api/dados/excluir":
+            if not self._admin():
+                return self._send({"erro": "apenas administradores"}, code=403)
+            return self._excluir_dados()
         if p == "/api/usuarios":       # corpo = .cer/.crt/.pem (ou .pfx)
             return self._cadastrar_usuario(body, u)
         try:
@@ -1560,6 +1590,20 @@ class H(BaseHTTPRequestHandler):
                 os.remove(tmp)
             except OSError:
                 pass
+
+    def _excluir_dados(self):
+        c = db()
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            renov = c.execute("SELECT COUNT(*) FROM renovacoes").fetchone()[0]
+            eventos = c.execute("SELECT COUNT(*) FROM eventos").fetchone()[0]
+            c.execute("DELETE FROM eventos")
+            c.execute("DELETE FROM renovacoes")
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+        return self._send({"ok": True, "renovacoes": renov, "eventos": eventos})
 
     def finish(self):
         try:

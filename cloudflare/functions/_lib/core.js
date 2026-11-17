@@ -1185,6 +1185,18 @@ async function rotaPost(env, K, url, request, user, admin) {
   }
 
   if (p === "/api/importar") return await importar(env, url, body);
+  if (p === "/api/dados/excluir") {
+    if (!admin) throw new HttpError(403, "apenas administradores");
+    const renov = await first(env, "SELECT COUNT(*) AS n FROM renovacoes");
+    const eventos = await first(env, "SELECT COUNT(*) AS n FROM eventos");
+    await run(env, "DELETE FROM eventos");
+    await run(env, "DELETE FROM renovacoes");
+    return json({
+      ok: true,
+      renovacoes: Number(renov?.n || 0),
+      eventos: Number(eventos?.n || 0),
+    });
+  }
   if (p === "/api/renovacoes") return await criarRenovacao(env, body);
 
   if (p === "/api/usuarios") {

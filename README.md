@@ -54,6 +54,10 @@ preenchidas, ele confere a regra e mostra um aviso (sem bloquear a importação)
 A duração aceita textos como `3 meses`, `1 ano` e `2 anos`; em colunas numéricas, A3 `1/2/3`
 é interpretado como anos e SafeID `1` = 1 ano, `3` = 3 meses.
 
+Planilhas de vendas (com `Produto` e `Data Venda`) também são aceitas: o vencimento do
+certificado é calculado pela data de venda + duração do produto (`12 meses`, `1 ano`, etc.),
+mesmo que a coluna `Data Vencimento` traga a data de pagamento.
+
 ## Configuração (variáveis de ambiente)
 
 Sem elas, e-mail e Kommo rodam em **modo simulação** (só imprimem no console).
@@ -127,7 +131,9 @@ o certificado e não é armazenada).
 
 **Perfis:** o `admin` vê todas as abas; o `operador` vê **Renovações**, **Mensagens** e
 **Configurações** (importação de planilha e integração Kommo). A aba **Usuários** é exclusiva do
-perfil `admin`.
+perfil `admin`. Em **Configurações → Dados**, o administrador pode importar a planilha e usar
+**Excluir todos os dados** (com confirmação por texto) para limpar renovações e histórico;
+usuários e configurações são mantidos.
 
 **Tema e menu:** o botão de tema no canto superior alterna **Automático → Claro → Escuro**. Os
 botões de recolher e fixar ficam dentro do menu, ao lado do nome do sistema. Sem fixar, o menu
@@ -207,9 +213,10 @@ Status: `a_vencer → email_enviado → whatsapp_enviado → agendado → emitid
 python testes.py -v
 ```
 
-38 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade), régua
+41 testes cobrindo importação (BOM, `;`, `.CSV`, serial do Excel, contatos inválidos, regras de validade,
+planilha de vendas com `Data Venda` + produto), régua
 (aviso em D30, repetição a cada 7 dias, deduplicação, sem contato), métricas, API HTTP, CSRF, webhook,
-modelos de mensagem, mensagem para a Kommo e login por certificado
+modelos de mensagem, mensagem para a Kommo, exclusão de dados e login por certificado
 (certificado válido, vencido, inativo, operador × admin, cadastro PEM e DER).
 
 ## Segurança

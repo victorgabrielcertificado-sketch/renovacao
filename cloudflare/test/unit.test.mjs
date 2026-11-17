@@ -73,6 +73,21 @@ test("calcula vencimento pela emissão e duração", () => {
   assert.equal(r.avisos, 0);
 });
 
+test("planilha de vendas calcula vencimento pela data de venda + produto", () => {
+  const csv =
+    "Cliente;Produto;Data Venda;Data Vencimento\n" +
+    "ACME;e-CNPJ A1 12 meses;10/01/2026;10/01/2026\n" +
+    "BETA;e-CPF A3 24 meses;10/01/2026;10/01/2026\n" +
+    "GAMA;e-PJ A1 - 1 ano em arquivo;10/01/2026;\n";
+  const r = lerLinhas(enc(csv), "vendas.csv");
+  assert.equal(r.linhas.length, 3);
+  assert.deepEqual(
+    r.linhas.map((l) => l.vencimento),
+    ["2027-01-10", "2028-01-10", "2027-01-10"],
+  );
+  assert.equal(r.avisos, 0);
+});
+
 test("aceita coluna Validade com duração e calcula a partir da emissão", () => {
   const csv = "Cliente;Tipo;Emissão;Validade\nACME;e-CNPJ A3;10/01/2026;3 anos\n";
   const r = lerLinhas(enc(csv), "regras.csv");

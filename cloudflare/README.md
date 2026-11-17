@@ -53,8 +53,8 @@ npm run dev           # http://127.0.0.1:8788
 Em outro terminal:
 
 ```bash
-npm test              # 12 testes unitários (planilha, datas, validade, certificado, auth)
-npm run test:api      # 28 verificações de integração (servidor precisa estar rodando)
+npm test              # 13 testes unitários (planilha, datas, validade, certificado, auth)
+npm run test:api      # 30 verificações de integração (servidor precisa estar rodando)
 ```
 
 > No Windows, use `npm.cmd`/`npx.cmd` se o PowerShell bloquear os scripts `.ps1`.
@@ -72,6 +72,10 @@ Quando só há emissão e duração, o sistema calcula o vencimento. Quando as d
 preenchidas, ele confere a regra e mostra um aviso (sem bloquear a importação) se não bater.
 A duração aceita textos como `3 meses`, `1 ano` e `2 anos`; em colunas numéricas, A3 `1/2/3`
 é interpretado como anos e SafeID `1` = 1 ano, `3` = 3 meses.
+
+Planilhas de vendas (com `Produto` e `Data Venda`) também são aceitas: o vencimento do
+certificado é calculado pela data de venda + duração do produto (`12 meses`, `1 ano`, etc.),
+mesmo que a coluna `Data Vencimento` traga a data de pagamento.
 
 ## Publicar no Cloudflare Pages
 
@@ -169,7 +173,9 @@ o botão **Sair do sistema** remove o cookie.
   O login aceita o **nome** ou o **e-mail** cadastrado.
 - **Perfis:** `admin` vê todas as abas; `operador` vê **Renovações**, **Mensagens** e
   **Configurações** (importação de planilha e integração Kommo), mas a aba **Usuários** é exclusiva
-  de `admin`.
+  de `admin`. Em **Configurações → Dados**, o `admin` pode importar a planilha e usar
+  **Excluir todos os dados** (com confirmação por texto) para limpar renovações e histórico;
+  usuários e configurações são mantidos.
 - **Tema e menu:** o botão no canto superior alterna **Automático → Claro → Escuro**. Os botões de
   recolher e fixar ficam dentro do menu, ao lado do nome do sistema. Sem fixar, o menu começa
   recolhido e volta a recolher ao escolher uma aba; fixado, permanece aberto. As duas preferências

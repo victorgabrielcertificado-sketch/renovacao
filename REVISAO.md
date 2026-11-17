@@ -5,7 +5,7 @@ Arquivos entregues nesta pasta:
 | Arquivo | O que é |
 |---|---|
 | `renovacao.py` | protótipo corrigido (mesma estrutura/comandos do original) |
-| `testes.py` | 38 testes automatizados (importação, régua, métricas, HTTP/webhook, mensagens) |
+| `testes.py` | 41 testes automatizados (importação, régua, métricas, HTTP/webhook, mensagens) |
 | `REVISAO.md` | este relatório |
 
 Ambiente preparado nesta máquina: **Python 3.12.10** (winget) + **pandas 3.1.1** + **openpyxl 3.1.5**.
@@ -14,7 +14,7 @@ Ambiente preparado nesta máquina: **Python 3.12.10** (winget) + **pandas 3.1.1*
 cd renovacao
 python renovacao.py demo        # gera certificados_exemplo.xlsx, importa e roda a régua
 python renovacao.py serve       # painel em http://localhost:8000
-python testes.py -v             # 38 testes
+python testes.py -v             # 41 testes
 ```
 
 > Se `python` não for reconhecido, abra um terminal novo (o winget atualiza o PATH) ou use
@@ -94,6 +94,10 @@ python testes.py -v             # 38 testes
 - Importação não era transacional: erro no meio deixava lixo. Agora `BEGIN IMMEDIATE`/`ROLLBACK`.
 - Reimportar não atualizava contato e podia duplicar. Agora atualiza e-mail/telefone/valor
   **sem** mexer em status/régua.
+- Planilhas de vendas (com `Produto` e `Data Venda`) importavam 0 ou usavam a data de pagamento
+  como vencimento. Agora o vencimento é calculado pela data de venda + duração do produto.
+- Adicionado **Excluir todos os dados** em Configurações (admin, com confirmação por texto),
+  que limpa renovações e histórico sem apagar usuários/configurações.
 - `regua_ultima` era gravado mesmo sem contato; agora registra evento `ignorado`.
 - Textos: `"venceu há 1 dias"` e `"vence em -3 dias"` → `_quando()` com singular/plural e
   “vence hoje”.
@@ -173,10 +177,10 @@ Recursos adicionados depois da revisão inicial:
 ## Validação executada
 
 - `python -m py_compile renovacao.py testes.py` → OK
-- `python testes.py -v` → **38 testes, todos OK** (inclui certificado válido, vencido, inativo,
-  operador × admin, cadastro PEM/DER/PFX, senha errada, modelos de mensagem e Kommo)
+- `python testes.py -v` → **41 testes, todos OK** (inclui certificado válido, vencido, inativo,
+  operador × admin, cadastro PEM/DER/PFX, senha errada, modelos de mensagem, planilha de vendas e Kommo)
 - Teste manual do painel no navegador: renderização, troca de status, histórico, abas de
   configurações/usuários, menu recolhido/fixado, tema no canto, aba Mensagens, chips de variáveis
   e webhook (token certo/errado) — OK
 - JavaScript embutido validado com `node --check`/`new Function` → OK
-- Cloudflare: `npm test` → **12 testes OK**; `npm run test:api` → **28 verificações OK**
+- Cloudflare: `npm test` → **13 testes OK**; `npm run test:api` → **30 verificações OK**
