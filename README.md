@@ -14,6 +14,7 @@ automáticos (e-mail/WhatsApp), registrar mensagens na Kommo CRM e medir a taxa 
 - **Login por certificado digital** (e-CPF/e-CNPJ) via proxy TLS, com perfis `admin`/`operador`.
 - **Painel web** responsivo (claro/escuro) com funil, taxa de renovação por mês, histórico do lead,
   importação de planilha, configuração da integração e gestão de usuários/certificados.
+- **Sessão no topo**: avatar com a inicial, nome, perfil e botão **Sair do sistema**.
 - **Métricas**: total que vence no mês, taxa de renovação, receita recebida, por mês e por tipo.
 
 ## Requisitos

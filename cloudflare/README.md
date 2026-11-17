@@ -161,7 +161,8 @@ em uso; a Cloudflare atribui um sufixo quando isso acontece).
 ## Login pelo formulário e usuários
 
 O painel exige sessão. O formulário troca usuário/senha por um **cookie de sessão HMAC**
-(`HttpOnly`, `SameSite=Lax`, 12 horas), e o botão **Sair** remove o cookie.
+(`HttpOnly`, `SameSite=Lax`, 12 horas). No topo, o bloco do usuário mostra avatar, nome e perfil;
+o botão **Sair do sistema** remove o cookie.
 
 - **Admin de emergência:** `PAINEL_USER` + `PAINEL_SENHA` (também aceito no Basic Auth).
 - **Usuários individuais:** cadastrados na aba **Usuários** com nome, e-mail, perfil e senha.

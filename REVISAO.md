@@ -165,6 +165,7 @@ Recursos adicionados depois da revisão inicial:
 - **Menu lateral recolhível** com botão de **fixar** (persistido em `localStorage`) e **botão de
   tema no canto superior** (Automático → Claro → Escuro). O layout mobile continua em barra
   horizontal.
+- **Usuário no topo:** avatar com a inicial, nome, perfil e botão vermelho **Sair do sistema**.
 - Schema/migração: `renovacoes.email_envio` e `renovacoes.enviar_email`; chaves de config
   `email_assunto`, `email_corpo`, `mensagem_whatsapp`, `mensagem_kommo`, remetente e SMTP/Resend.
 
