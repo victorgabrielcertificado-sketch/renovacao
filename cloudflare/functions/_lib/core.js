@@ -1189,8 +1189,10 @@ async function rotaPost(env, K, url, request, user, admin) {
     if (!admin) throw new HttpError(403, "apenas administradores");
     const renov = await first(env, "SELECT COUNT(*) AS n FROM renovacoes");
     const eventos = await first(env, "SELECT COUNT(*) AS n FROM eventos");
-    await run(env, "DELETE FROM eventos");
-    await run(env, "DELETE FROM renovacoes");
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM eventos"),
+      env.DB.prepare("DELETE FROM renovacoes"),
+    ]);
     return json({
       ok: true,
       renovacoes: Number(renov?.n || 0),
