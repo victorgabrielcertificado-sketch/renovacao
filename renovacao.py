@@ -810,6 +810,13 @@ body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 Figtree,system
 .top-actions{display:flex;align-items:center;gap:10px}
 .bell{width:38px;height:38px;border-radius:50%;border:1px solid var(--ln);background:var(--sf);font-size:17px;cursor:pointer;display:grid;place-items:center}
 .bell:hover{background:var(--ac2)}.bell[aria-pressed="true"]{background:var(--ac2);border-color:var(--ac)}
+.usuario{display:flex;align-items:center;gap:10px;border-left:1px solid var(--ln);padding-left:12px;margin-left:4px}
+.avatar{width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;font-weight:700;display:grid;place-items:center;font-size:15px;flex-shrink:0}
+.u-info{display:flex;flex-direction:column;line-height:1.2;min-width:0}
+.u-info b{font-size:13px;font-weight:600;white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis}
+.u-perfil{font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--mu);background:var(--ac2);border-radius:999px;padding:1px 7px;margin-top:2px;align-self:flex-start}
+.sair-icone{width:34px;height:34px;border-radius:8px;border:0;background:var(--red);color:#fff;cursor:pointer;display:grid;place-items:center;flex-shrink:0}
+.sair-icone:hover{filter:brightness(1.1)}
 main{padding:24px;width:100%;max-width:1440px;margin:0 auto}
 h2{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0 0 18px}
 h3{font-size:16px;margin:0 0 12px}
@@ -871,7 +878,7 @@ select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 #msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:9px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}#msg.on{opacity:1}
 @media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.dash{grid-template-columns:1fr}.detail{position:static}}
-@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}#btn-menu,#btn-fixar{display:none}.side.collapsed{width:100%}.side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:inline}.side.collapsed .brand{justify-content:flex-start;padding:12px}.side.collapsed .mi{justify-content:flex-start;padding:9px 12px}}
+@media(max-width:700px){.app{flex-direction:column}.side{width:100%;height:auto;position:static;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--ln)}.brand{border:0;padding:12px}.menu{flex-direction:row;padding:8px;overflow-x:auto;flex:0 1 auto}.mi{width:auto;white-space:nowrap}.side-foot{display:none}.top{padding:12px 16px}main{padding:16px}h2{font-size:22px}.cards{grid-template-columns:1fr}.card{padding:12px}#btn-menu,#btn-fixar{display:none}.side.collapsed{width:100%}.side.collapsed .brand-txt,.side.collapsed .lbl,.side.collapsed .side-foot span{display:inline}.side.collapsed .brand{justify-content:flex-start;padding:12px}.side.collapsed .mi{justify-content:flex-start;padding:9px 12px}.u-info{display:none}.usuario{border-left:0;padding-left:0;margin-left:0;gap:8px}}
 </style></head><body>
 <div class="app">
 <aside class="side">
@@ -888,10 +895,9 @@ select,input,textarea{font:inherit;color:var(--tx);background:var(--sf);border:1
   <button id="m5" class="mi" onclick="aba(5)" aria-current="false" title="Configurações"><span class="ic">⚙</span><span class="lbl">Configurações</span></button>
   <!--USUARIOS_NAV_INICIO--><button id="m6" class="mi" onclick="aba(6)" aria-current="false" title="Usuários" hidden><span class="ic">👥</span><span class="lbl">Usuários</span></button><!--USUARIOS_NAV_FIM-->
  </nav>
- <div class="side-foot"><span id="eu"></span></div>
-</aside>
+ </aside>
 <div class="wrap">
-<header class="top"><button id="btn-menu" class="bell" onclick="alternarMenu()" title="Recolher menu" aria-label="Recolher menu">«</button><button id="btn-fixar" class="bell" onclick="fixarMenu()" title="Fixar menu" aria-label="Fixar menu" aria-pressed="false">📌</button><h1>Renovação de certificados</h1><div class="top-actions"><button id="btn-tema" class="bell" onclick="ciclarTema()" title="Alterar tema" aria-label="Alterar tema">🌓</button><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button></div></header>
+<header class="top"><button id="btn-menu" class="bell" onclick="alternarMenu()" title="Recolher menu" aria-label="Recolher menu">«</button><button id="btn-fixar" class="bell" onclick="fixarMenu()" title="Fixar menu" aria-label="Fixar menu" aria-pressed="false">📌</button><h1>Renovação de certificados</h1><div class="top-actions"><button id="btn-tema" class="bell" onclick="ciclarTema()" title="Alterar tema" aria-label="Alterar tema">🌓</button><button class="bell" onclick="regua()" title="Rodar régua agora" aria-label="Rodar régua agora">🔔</button><div class="usuario" id="usuario" title="Sessão do usuário"><span class="avatar" id="u-avatar">–</span><span class="u-info"><b id="u-nome">…</b><span class="u-perfil" id="u-perfil">…</span></span><button class="sair-icone" id="btn-sair" onclick="sair()" title="Sair do sistema" aria-label="Sair do sistema"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M10 3h8a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-8v-2h8V5h-8V3z" fill="currentColor"/><path d="M12 12H3m0 0 3-3m-3 3 3 3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></div></header>
 <main>
 <section id="s1">
  <h2>Processo de Renovação de Certificados</h2>
@@ -1083,7 +1089,8 @@ async function salvar(){
 async function limparToken(){if(!confirm("Remover o token salvo?"))return;try{await post("/api/config",{limpar_token:true});el("ct").value="";toast("Token removido.")}catch(e){toast("Falha: "+e.message)}}
 async function testar(){try{toast((await post("/api/kommo/testar",{})).msg)}catch(e){toast("Falha: "+e.message)}}
 async function imp(){const f=el("arq").files[0];if(!f)return toast("Escolha uma planilha .xlsx ou .csv.");if(f.size>20971520)return toast("Arquivo maior que 20 MB.");try{const r=await post("/api/importar?nome="+encodeURIComponent(f.name),f);toast(r.erro||`${r.novas} novas, ${r.atualizadas} atualizadas, ${r.ignoradas} ignoradas.`);await carregarTudo()}catch(e){toast("Falha ao importar: "+e.message)}}
-async function carregarEu(){try{EU=await j("/api/eu");el("eu")&&(el("eu").textContent=`Logado como ${EU.nome} (${EU.perfil})`);const adm=EU.perfil==="admin";const m6=el("m6"),s6=el("s6");if(m6)m6.hidden=!adm;if(!adm){if(m6)m6.remove();if(s6)s6.remove()}}catch(e){}}
+async function carregarEu(){try{EU=await j("/api/eu");const nome=EU.nome||"Usuário",perfil=EU.perfil||"";el("u-nome").textContent=nome;el("u-perfil").textContent=perfil;el("u-avatar").textContent=(nome[0]||"U").toUpperCase();const d=el("usuario");if(d)d.title=nome+(perfil?` · Perfil: ${perfil}`:"");const adm=perfil==="admin";const m6=el("m6"),s6=el("s6");if(m6)m6.hidden=!adm;if(!adm){if(m6)m6.remove();if(s6)s6.remove()}}catch(e){}}
+function sair(){toast("Sessão local encerrada.");location.reload()}
 async function usuarios(){if(EU.perfil!=="admin")return;try{const us=await j("/api/usuarios");el("usrs").innerHTML="<tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Validade</th><th>Ativo</th><th></th></tr>"+(us.map(u=>`<tr><td>${esc(u.nome)}</td><td>${esc(u.email||"—")}</td><td>${esc(u.perfil)}</td><td>${br(u.validade)}</td><td><input type="checkbox" ${u.ativo?"checked":""} onchange="ativar(${u.id},this.checked)" aria-label="Usuário ativo"></td><td><button class="lk" onclick="remover(${u.id})">Remover</button></td></tr>`).join("")||"<tr><td colspan=6>Nenhum usuário cadastrado.</td></tr>")}catch(e){toast("Falha ao carregar usuários: "+e.message)}}
 async function ativar(id,ativo){try{await post("/api/usuarios/ativo",{id,ativo});toast(ativo?"Usuário ativado.":"Usuário desativado.")}catch(e){toast("Falha: "+e.message);usuarios()}}
 async function remover(id){if(!confirm("Remover este usuário?"))return;try{await post("/api/usuarios/remover",{id});toast("Usuário removido.");usuarios()}catch(e){toast("Falha: "+e.message)}}
